@@ -62,14 +62,17 @@ This produces `build/fstn view.app` and `build/fstn-view-<version>.zip`.
 
 ### Publishing a release
 
-1. Bump `CFBundleShortVersionString` in `Resources/Info.plist`, for example to `0.2.0`.
-2. Run `./build.sh`.
-3. Create a GitHub release tagged `v0.2.0` and attach `build/fstn-view-0.2.0.zip`:
+Releases are built automatically by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)).
+
+1. Bump `CFBundleShortVersionString` in `Resources/Info.plist`, for example to `0.2.0`, and commit.
+2. Tag the commit and push the tag:
    ```
-   gh release create v0.2.0 build/fstn-view-0.2.0.zip --title "fstn view 0.2.0" --notes "What changed…"
+   git tag -a v0.2.0 -m "fstn view 0.2.0"
+   git push origin main v0.2.0
    ```
 
-The tag must be the version number with a `v` prefix, and the release must contain a `.zip` with the app. Installed copies use both to find and install the update.
+The workflow checks that the tag matches the app version, builds the app on macOS, and publishes a release with `fstn-view-0.2.0.zip` and auto-generated notes.
+Installed copies find the new release and update themselves.
 
 ## License
 
