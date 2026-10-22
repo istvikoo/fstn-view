@@ -13,7 +13,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     /// Тимчасово показана, бо миша біля правого краю.
     private var autoShown = false
 
-    private var files: [URL] = []
+    /// Смуга мініатюр знизу: виїжджає, коли миша біля нижнього краю.
+    private let strip = ThumbnailStripView()
+    private var stripBottom: NSLayoutConstraint!
+    private var stripShown = false
+
+    private var files: [URL] = [] {
+        didSet { strip.setFiles(files, current: index) }
+    }
     private var index = 0
     private var direction = 1
     private var current: LoadedImage?
@@ -65,13 +72,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         // Фото на всю ширину, панель — шаром поверх нього біля правого краю
         let container = HoverTrackingView()
         container.clipsToBounds = true
-        for v in [canvas, blur] as [NSView] {
+        for v in [canvas, strip, blur] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(v)
         }
         panelTrailing = blur.trailingAnchor.constraint(equalTo: container.trailingAnchor)
         canvasToEdge = canvas.trailingAnchor.constraint(equalTo: container.trailingAnchor)
         canvasToPanel = canvas.trailingAnchor.constraint(equalTo: blur.leadingAnchor)
+        stripBottom = strip.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: ThumbnailStripView.height)
         NSLayoutConstraint.activate([
             canvas.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             canvas.topAnchor.constraint(equalTo: container.topAnchor),
@@ -80,10 +88,19 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             blur.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             blur.widthAnchor.constraint(equalToConstant: Self.panelSize),
             panelTrailing,
+            strip.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            strip.trailingAnchor.constraint(equalTo: canvas.trailingAnchor),
+            strip.heightAnchor.constraint(equalToConstant: ThumbnailStripView.height),
+            stripBottom,
         ])
+        strip.alphaValue = 0
+        strip.onSelect = { [weak self] i in self?.goTo(index: i) }
         window.contentView = container
         container.onMouseMoved = { [weak self] point in self?.mouseMoved(to: point) }
-        container.onMouseExited = { [weak self] in self?.setAutoShown(false) }
+        container.onMouseExited = { [weak self] in
+            self?.setAutoShown(false)
+            self?.setStripShown(false)
+        }
         applyPanelState(animated: false)
 
         window.setFrameAutosaveName("FstnViewMain")
@@ -224,6 +241,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     private func updatePosition() {
         state.position = files.isEmpty ? "" : "\(index + 1) / \(files.count)"
+        strip.setCurrent(index)
         updateOverlay()
     }
 
@@ -319,10 +337,45 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Видалення
 
-    /// Переміщує поточне фото в Кошик і показує наступне.
+    private static let skipDeleteConfirmKey = "skipDeleteConfirmation"
+    private var isConfirmingDelete = false
+
+    /// Delete / Backspace. Поки користувач не поставив «Більше не показувати», спершу питаємо.
     func deleteCurrent() {
-        guard files.indices.contains(index) else { return }
+        guard files.indices.contains(index), !isConfirmingDelete else { return }
         let url = files[index]
+        if UserDefaults.standard.bool(forKey: Self.skipDeleteConfirmKey) {
+            moveToTrash(url)
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = L("Перемістити фото в Кошик?")
+        alert.informativeText = L("«%@» буде переміщено в Кошик, а не видалено назавжди. Повернути фото можна з Кошика або клавішами ⌘Z, поки програма відкрита.", url.lastPathComponent)
+        alert.addButton(withTitle: L("Перемістити в Кошик"))
+        alert.addButton(withTitle: L("Скасувати")).keyEquivalent = "\u{1b}"   // Esc — скасувати
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = L("Більше не показувати")
+
+        let handle: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard let self else { return }
+            self.isConfirmingDelete = false
+            if alert.suppressionButton?.state == .on {
+                UserDefaults.standard.set(true, forKey: Self.skipDeleteConfirmKey)
+            }
+            if response == .alertFirstButtonReturn { self.moveToTrash(url) }
+            self.window?.makeFirstResponder(self.canvas)
+        }
+        isConfirmingDelete = true
+        if let window {
+            alert.beginSheetModal(for: window, completionHandler: handle)
+        } else {
+            handle(alert.runModal())
+        }
+    }
+
+    /// Переміщує фото в Кошик і показує наступне.
+    private func moveToTrash(_ url: URL) {
         NSWorkspace.shared.recycle([url]) { [weak self] trashed, error in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -334,6 +387,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                     self.deleted.append((original: url, trashed: trashedURL))
                 }
                 self.loader.forget(url)
+                ThumbnailCache.shared.forget(url)
                 guard let i = self.files.firstIndex(of: url) else { return }
                 self.files.remove(at: i)
                 if self.files.isEmpty {
@@ -406,12 +460,43 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func mouseMoved(to point: NSPoint) {
+        // Нижній край — смуга мініатюр (y у вікні рахується знизу)
+        if !stripShown, point.y <= 6, !files.isEmpty {
+            setStripShown(true)
+        } else if stripShown, point.y > ThumbnailStripView.height + 30 {
+            setStripShown(false)
+        }
+
+        // Правий край — інформаційна панель
         guard !isPinned, let width = window?.contentView?.bounds.width else { return }
         if !autoShown, point.x >= width - 8 {
             setAutoShown(true)
         } else if autoShown, point.x < width - Self.panelSize - 30 {
             setAutoShown(false)
         }
+    }
+
+    private func setStripShown(_ shown: Bool) {
+        guard stripShown != shown, let container = window?.contentView else { return }
+        stripShown = shown
+        if shown { strip.scrollToCurrent(animated: false) }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.18
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            ctx.allowsImplicitAnimation = true
+            stripBottom.animator().constant = shown ? 0 : ThumbnailStripView.height
+            strip.animator().alphaValue = shown ? 1 : 0
+            container.layoutSubtreeIfNeeded()
+        }
+    }
+
+    /// Перехід до фото за номером (клік по мініатюрі).
+    func goTo(index target: Int) {
+        guard files.indices.contains(target), target != index else { return }
+        direction = target > index ? 1 : -1
+        index = target
+        showCurrent()
+        window?.makeFirstResponder(canvas)
     }
 
     private func setAutoShown(_ shown: Bool) {

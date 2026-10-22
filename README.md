@@ -9,9 +9,10 @@ almost instantly and shows an info panel with EXIF data and a histogram.
 - **Fast opening.** Images are decoded straight to screen size. For RAW files the embedded full-size JPEG preview is used, so a 30 MP CR3 opens in about 0.15 s.
 - **Instant browsing.** Neighbouring images are preloaded, so the arrow keys switch photos without delay.
 - **Info panel** (EXIF, camera, lens, exposure, GPS, RGB histogram). It slides in when you move the mouse to the right edge, and you can pin it with `I`.
+- **Thumbnail strip.** It slides up when you move the mouse to the bottom edge; click a thumbnail to open that photo.
 - **Info line** in the top-left corner: file name, dimensions, megapixels, file size, position in folder and zoom (like FastStone).
 - **Zoom.** Click to toggle 100% at the clicked point. Press and hold to zoom only while the button is down, and drag to look around.
-- **Delete to Trash** with `Delete` / `Backspace`; `⌘Z` restores the last deleted photo.
+- **Delete to Trash** with `Delete` / `Backspace`. The app asks for confirmation (with a *Don’t show again* option), and `⌘Z` restores the last deleted photo.
 - **Full screen on launch.** `Esc` quits.
 - **English and Ukrainian UI.** Switch it in the *Language* menu without restarting.
 - **Built-in updates** from GitHub Releases.
@@ -37,6 +38,7 @@ Requires macOS 14 Sonoma or later.
 | Zoom while held | Press and hold the mouse button |
 | Zoom in / out | `+` / `−`, `⌘` + wheel, pinch |
 | Fit to window | `0` |
+| Show thumbnail strip | Move the mouse to the bottom edge |
 | Show info panel | Move the mouse to the right edge |
 | Pin / unpin info panel | `I` or `Tab` |
 | Show / hide info line | `T` |
