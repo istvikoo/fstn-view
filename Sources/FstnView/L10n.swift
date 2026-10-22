@@ -1,0 +1,163 @@
+import Foundation
+
+/// Мова інтерфейсу. Вибір зберігається; «як у системі» — за мовою macOS.
+enum AppLanguage: String, CaseIterable {
+    case system, uk, en
+
+    static let changed = Notification.Name("FstnView.languageChanged")
+    private static let defaultsKey = "appLanguage"
+
+    /// Що обрав користувач у меню.
+    static var setting: AppLanguage {
+        get { AppLanguage(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .system }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey)
+            resolved = resolve(newValue)
+            NotificationCenter.default.post(name: changed, object: nil)
+        }
+    }
+
+    /// Мова, якою зараз показуються тексти (тільки uk або en).
+    private(set) static var resolved: AppLanguage = resolve(setting)
+
+    private static func resolve(_ lang: AppLanguage) -> AppLanguage {
+        guard lang == .system else { return lang }
+        let preferred = Locale.preferredLanguages.first?.lowercased() ?? "en"
+        return preferred.hasPrefix("uk") ? .uk : .en
+    }
+}
+
+/// Переклад: ключ — український текст. Для англійської шукаємо в таблиці нижче.
+/// Плейсхолдери %@ / %d підставляються через String(format:).
+func L(_ uk: String) -> String {
+    guard AppLanguage.resolved == .en else { return uk }
+    return english[uk] ?? uk
+}
+
+func L(_ uk: String, _ args: CVarArg...) -> String {
+    String(format: L(uk), arguments: args)
+}
+
+private let english: [String: String] = [
+    // Меню
+    "Про %@": "About %@",
+    "Сховати %@": "Hide %@",
+    "Сховати інші": "Hide Others",
+    "Завершити %@": "Quit %@",
+    "Перевірити оновлення…": "Check for Updates…",
+    "Файл": "File",
+    "Відкрити…": "Open…",
+    "Закрити вікно": "Close Window",
+    "Правка": "Edit",
+    "Відновити видалене фото": "Restore Deleted Photo",
+    "Перемістити в Кошик (Delete)": "Move to Trash (Delete)",
+    "Вигляд": "View",
+    "Закріпити інформаційну панель (I)": "Pin Info Panel (I)",
+    "Вписати у вікно (0)": "Fit to Window (0)",
+    "Реальний розмір 100% (Z)": "Actual Size 100% (Z)",
+    "Збільшити (+)": "Zoom In (+)",
+    "Зменшити (−)": "Zoom Out (−)",
+    "Повний екран (F / Enter)": "Full Screen (F / Enter)",
+    "Перехід": "Go",
+    "Наступне (→ / Пробіл)": "Next (→ / Space)",
+    "Попереднє (←)": "Previous (←)",
+    "Перше (Home)": "First (Home)",
+    "Останнє (End)": "Last (End)",
+    "Вікно": "Window",
+    "Згорнути": "Minimize",
+    "Мова / Language": "Language / Мова",
+    "Як у системі": "System Default",
+    "Оберіть зображення або папку": "Choose an image or a folder",
+
+    // Оновлення
+    "Доступна нова версія %@ %@": "A new version of %@ is available: %@",
+    "У вас версія %@.": "You have version %@.",
+    "Встановити і перезапустити": "Install and Relaunch",
+    "Сторінка релізу": "Release Page",
+    "Пізніше": "Later",
+    "У вас найновіша версія": "You’re up to date",
+    "Не вдалося оновити програму": "Couldn’t update the app",
+    "В архіві оновлення немає програми %@": "The update archive doesn’t contain %@",
+
+    // Вікно і підказки
+    "Відкрийте зображення (⌘O) або перетягніть його сюди": "Open an image (⌘O) or drag it here",
+    "У папці «%@» немає зображень": "No images in folder “%@”",
+    "Не вдалося відкрити «%@»": "Couldn’t open “%@”",
+    "У папці більше немає зображень": "No more images in this folder",
+    "Не вдалося перемістити «%@» у Кошик": "Couldn’t move “%@” to the Trash",
+    "Не вдалося відновити «%@»": "Couldn’t restore “%@”",
+    "З кешу (декодовано за %d мс)": "From cache (decoded in %d ms)",
+    "Декодовано за %d мс · прев'ю %d×%d": "Decoded in %d ms · preview %d×%d",
+    "Вписано · %d%%": "Fit · %d%%",
+    "Не вдалося завантажити оригінал": "Couldn’t load the original",
+    "Оригінал %d×%d": "Original %d×%d",
+    "Немає зображення": "No image",
+
+    // Розділи панелі
+    "Зображення": "Image",
+    "Камера": "Camera",
+    "Зйомка": "Exposure",
+    "GPS": "GPS",
+
+    // Поля
+    "Ім'я": "Name",
+    "Папка": "Folder",
+    "Розмір": "File size",
+    "Змінено": "Modified",
+    "Створено": "Created",
+    "Розміри": "Dimensions",
+    "Формат": "Format",
+    "Глибина": "Bit depth",
+    "Колір": "Color model",
+    "Профіль": "Profile",
+    "DPI": "DPI",
+    "Прозорість": "Alpha",
+    "Кадрів": "Frames",
+    "Модель": "Model",
+    "Об'єктив": "Lens",
+    "ПЗ": "Software",
+    "Дата": "Date taken",
+    "Витримка": "Shutter",
+    "Діафрагма": "Aperture",
+    "ISO": "ISO",
+    "Фокусна": "Focal length",
+    "Експокорекція": "Exposure comp.",
+    "Режим": "Program",
+    "Замір": "Metering",
+    "Спалах": "Flash",
+    "Баланс білого": "White balance",
+    "Широта": "Latitude",
+    "Довгота": "Longitude",
+    "Висота": "Altitude",
+
+    // Значення
+    "%d × %d (%@ Мп)": "%d × %d (%@ MP)",
+    "%d біт/канал": "%d bits/channel",
+    "Так": "Yes",
+    "%@ мм": "%@ mm",
+    " (%d мм екв.)": " (%d mm equiv.)",
+    "%@ с": "%@ s",
+    "1/%d с": "1/%d s",
+    "%d м": "%d m",
+    "Спрацював": "Fired",
+    "Без спалаху": "No flash",
+    "Авто": "Auto",
+    "Ручний": "Manual",
+    "Не визначено": "Not defined",
+    "Ручний (M)": "Manual (M)",
+    "Програмний (P)": "Program (P)",
+    "Пріоритет діафрагми (A)": "Aperture priority (A)",
+    "Пріоритет витримки (S)": "Shutter priority (S)",
+    "Творчий": "Creative",
+    "Спорт": "Action",
+    "Портрет": "Portrait",
+    "Пейзаж": "Landscape",
+    "Невідомо": "Unknown",
+    "Середній": "Average",
+    "Центрозважений": "Center-weighted",
+    "Точковий": "Spot",
+    "Багатоточковий": "Multi-spot",
+    "Матричний": "Evaluative / Matrix",
+    "Частковий": "Partial",
+    "Інший": "Other",
+]

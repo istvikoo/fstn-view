@@ -1,0 +1,34 @@
+import AppKit
+
+// Режим перевірки без вікна: "fstn view" --info <файл>
+// Друкує час декодування і дані для інформаційної панелі.
+let args = CommandLine.arguments
+if args.count >= 3, args[1] == "--bench" {
+    // "fstn view" --bench <файли…>: двічі декодує кожен файл (холодний і теплий запуск)
+    for path in args.dropFirst(2) {
+        let url = URL(fileURLWithPath: path)
+        let times = (0..<2).map { _ in ImageLoader.decodePreview(url: url, maxPixel: ImageLoader.shared.previewMaxPixel).map { Int($0.decodeTime * 1000) } ?? -1 }
+        print("\(url.lastPathComponent): \(times[0]) мс, повторно \(times[1]) мс")
+    }
+    exit(0)
+}
+if args.count >= 3, args[1] == "--info" {
+    let url = URL(fileURLWithPath: args[2])
+    guard let image = ImageLoader.decodePreview(url: url, maxPixel: ImageLoader.shared.previewMaxPixel) else {
+        print("Не вдалося відкрити \(url.path)")
+        exit(1)
+    }
+    print("Прев'ю \(image.preview.width)×\(image.preview.height), декодовано за \(Int(image.decodeTime * 1000)) мс")
+    for section in image.info.sections {
+        print("\n[\(section.title)]")
+        for row in section.rows { print("  \(row.label): \(row.value)") }
+    }
+    print("\nГістограма: \(image.histogram != nil ? "є" : "немає")")
+    exit(0)
+}
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.setActivationPolicy(.regular)
+app.run()
