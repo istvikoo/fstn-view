@@ -12,7 +12,7 @@ almost instantly and shows an info panel with EXIF data and a histogram.
 - **Thumbnail strip.** It slides up when you move the mouse to the bottom edge; click a thumbnail to open that photo.
 - **Info line** in the top-left corner: file name, dimensions, megapixels, file size, position in folder and zoom (like FastStone).
 - **Zoom.** Click to toggle 100% at the clicked point. Press and hold to zoom only while the button is down, and drag to look around.
-- **Develop RAW on demand.** RAW files are shown from their embedded JPEG for speed. Press `A` to develop the current RAW file with the macOS RAW engine (about 0.5 s); 100% zoom then shows the developed image too. Press `A` again to go back. Some cameras (for example Sony ARW) embed only a small JPEG, so those files are developed by default (marked `[ RAW ]`), and `A` switches to the camera's embedded JPEG (`[ JPEG ]`).
+- **Develop RAW on demand.** RAW files are shown from their embedded JPEG for speed. Press `A` to develop the current RAW file with the macOS RAW engine (about 0.5 s); 100% zoom then shows the developed image too. Press `A` again to go back. Some cameras (for example Sony ARW) embed only a small preview, so it looks softer full screen until you press `A`.
 - **Delete to Trash** with `Delete` / `Backspace`. The app asks for confirmation (with a *Don’t show again* option), and `⌘Z` restores the last deleted photo.
 - **Full screen on launch.** `Esc` quits.
 - **English and Ukrainian UI.** Switch it in the *Language* menu without restarting.

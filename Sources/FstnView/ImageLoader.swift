@@ -353,11 +353,9 @@ final class ImageLoader {
         var preview: CGImage?
         let isRaw = UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) ?? false
         if isRaw {
-            // У RAW майже завжди є вбудоване JPEG-прев'ю: воно відкривається в рази швидше, ніж повне декодування.
-            if let embedded = makeThumbnail(source, maxPixel: target, fromImageAlways: false),
-               max(embedded.width, embedded.height) * 2 >= target {
-                preview = embedded
-            }
+            // RAW за замовчуванням показуємо з вбудованого JPEG камери, навіть якщо він невеликий (Sony ARW — 1616 px).
+            // Справжня проявка — лише за клавішею A.
+            preview = makeThumbnail(source, maxPixel: target, fromImageAlways: false)
         }
         // Вбудованого JPEG немає або він замалий для екрана — проявляємо сам RAW
         let developedFromRaw = isRaw && preview == nil
