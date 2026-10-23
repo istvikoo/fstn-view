@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -122,6 +123,8 @@ final class ImageLoader {
     func forget(_ url: URL) {
         cache.removeObject(forKey: url as NSURL)
         fullCache.removeObject(forKey: url as NSURL)
+        rawCache.removeObject(forKey: url as NSURL)
+        rawFullCache.removeObject(forKey: url as NSURL)
         if let p = pending[url], !p.op.isExecuting {
             p.op.cancel()
             pending[url] = nil
@@ -180,6 +183,119 @@ final class ImageLoader {
             entry.op.cancel()
             pending[url] = nil
         }
+    }
+
+    // MARK: - Проявка RAW (клавіша A)
+
+    static func isRaw(_ url: URL) -> Bool {
+        UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) ?? false
+    }
+
+    private let rawCache: NSCache<NSURL, LoadedImage> = {
+        let c = NSCache<NSURL, LoadedImage>()
+        c.totalCostLimit = 300 * 1024 * 1024
+        return c
+    }()
+
+    private let rawFullCache: NSCache<NSURL, CGImage> = {
+        let c = NSCache<NSURL, CGImage>()
+        c.totalCostLimit = 400 * 1024 * 1024
+        return c
+    }()
+
+    /// Проявка важка для пам'яті й процесора — по одному файлу за раз.
+    private let rawQueue: OperationQueue = {
+        let q = OperationQueue()
+        q.name = "FstnView.raw"
+        q.maxConcurrentOperationCount = 1
+        q.qualityOfService = .userInitiated
+        return q
+    }()
+
+    private var rawPending: [URL: Pending] = [:]
+
+    func cachedDeveloped(_ url: URL) -> LoadedImage? {
+        rawCache.object(forKey: url as NSURL)
+    }
+
+    /// Проявлений RAW у повній роздільності (для зуму), якщо він ще в кеші.
+    func developedFull(_ url: URL) -> CGImage? {
+        rawFullCache.object(forKey: url as NSURL)
+    }
+
+    func loadDeveloped(_ url: URL, priority: Operation.QueuePriority, completion: ((LoadedImage?) -> Void)?) {
+        if let hit = rawCache.object(forKey: url as NSURL) {
+            completion?(hit)
+            return
+        }
+        if let p = rawPending[url] {
+            if let completion { p.callbacks.append(completion) }
+            if priority.rawValue > p.op.queuePriority.rawValue { p.op.queuePriority = priority }
+            return
+        }
+        let maxPixel = previewMaxPixel
+        let op = BlockOperation()
+        let entry = Pending(op: op)
+        if let completion { entry.callbacks.append(completion) }
+        op.addExecutionBlock { [weak self] in
+            let result = ImageLoader.developRAW(url: url, maxPixel: maxPixel)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let (image, full) = result {
+                    self.rawCache.setObject(image, forKey: url as NSURL, cost: image.cost)
+                    self.rawFullCache.setObject(full, forKey: url as NSURL, cost: full.bytesPerRow * full.height)
+                }
+                if self.rawPending[url] === entry { self.rawPending[url] = nil }
+                entry.callbacks.forEach { $0(result?.0) }
+            }
+        }
+        op.queuePriority = priority
+        rawPending[url] = entry
+        rawQueue.addOperation(op)
+    }
+
+    func cancelDeveloped(keeping keep: Set<URL>) {
+        for (url, entry) in rawPending where !keep.contains(url) && !entry.op.isExecuting {
+            entry.op.cancel()
+            rawPending[url] = nil
+        }
+    }
+
+    private static let rawContext = CIContext(options: [
+        .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)!,
+        .cacheIntermediates: false,
+    ])
+
+    /// Справжня проявка RAW вбудованим у macOS рушієм (як у Переглядачі та Фото).
+    /// Проявляємо один раз у повній роздільності: з неї ж робиться прев'ю під екран, а зум 100% — миттєвий.
+    static func developRAW(url: URL, maxPixel: Int) -> (LoadedImage, CGImage)? {
+        let start = CFAbsoluteTimeGetCurrent()
+        guard let filter = CIRAWFilter(imageURL: url), let output = filter.outputImage,
+              let space = CGColorSpace(name: CGColorSpace.displayP3),
+              let full = rawContext.createCGImage(output, from: output.extent, format: .RGBA8, colorSpace: space),
+              let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
+        else { return nil }
+
+        let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+        let info = ImageInfo.make(url: url, source: source, props: props)
+        let preview = scaled(full, maxSide: maxPixel) ?? full
+        let histogram = Histogram.compute(from: preview)
+        let image = LoadedImage(url: url, preview: preview, displaySize: CGSize(width: full.width, height: full.height),
+                                info: info, histogram: histogram, decodeTime: CFAbsoluteTimeGetCurrent() - start)
+        return (image, full)
+    }
+
+    private static func scaled(_ image: CGImage, maxSide: Int) -> CGImage? {
+        let side = max(image.width, image.height)
+        guard side > maxSide else { return image }
+        let k = Double(maxSide) / Double(side)
+        let w = max(1, Int((Double(image.width) * k).rounded())), h = max(1, Int((Double(image.height) * k).rounded()))
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage()
     }
 
     // MARK: - Повна роздільність (для масштабу 100% і більше)

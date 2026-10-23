@@ -29,6 +29,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     /// Фото, для якого зараз на екрані швидке прев'ю (чекаємо чітке).
     private var quickShownFor: URL?
     private var fullPrefetch: DispatchWorkItem?
+    /// Фото, для якого зараз показано проявлений RAW (клавіша A), і яке зараз проявляється.
+    private var rawShownFor: URL?
+    private var rawDeveloping: URL?
     /// Видалені в Кошик фото (для ⌘Z).
     private var deleted: [(original: URL, trashed: URL)] = []
     private var listingToken = UUID()
@@ -174,6 +177,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         window?.title = url.lastPathComponent
         window?.representedURL = url
         fullRequestedFor = nil
+        // RAW проявляється лише для того фото, де натиснули A
+        rawShownFor = nil
+        rawDeveloping = nil
+        loader.cancelDeveloped(keeping: [])
 
         if let hit = loader.cached(url) {
             display(hit, fromCache: true)
@@ -210,30 +217,39 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         updateOverlay()
     }
 
-    private func display(_ image: LoadedImage, fromCache: Bool) {
+    private func display(_ image: LoadedImage, fromCache: Bool, developed: Bool = false) {
+        // Проявлений RAW уже на екрані — запізніле вбудоване прев'ю його не перекриває
+        if !developed && rawShownFor == image.url { return }
+        // Те саме фото (швидке прев'ю → чітке, або JPEG ↔ проявлений RAW) — не скидаємо зум
+        let keepView = quickShownFor == image.url || current?.url == image.url
         current = image
         showingFull = false
         fullRequestedFor = nil
-        // Якщо вже показане швидке прев'ю цього фото — просто підміняємо його чітким, не скидаючи зум
-        let keepView = quickShownFor == image.url
         quickShownFor = nil
+        rawShownFor = developed ? image.url : nil
         canvas.setImage(image.preview, size: image.displaySize, resetView: !keepView)
-        // Оригінал для зуму вантажимо, лише якщо користувач затримався на фото (не під час швидкого гортання)
+        // Оригінал для зуму вантажимо, лише якщо користувач затримався на фото (не під час швидкого гортання).
+        // Для проявленого RAW оригінал уже є.
         fullPrefetch?.cancel()
         let url = image.url
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, self.current?.url == url else { return }
-            self.loader.loadFull(url, completion: nil)
+        if !developed {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.current?.url == url else { return }
+                self.loader.loadFull(url, completion: nil)
+            }
+            fullPrefetch = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
         }
-        fullPrefetch = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
         state.fileName = image.url.lastPathComponent
         state.info = image.info
         state.histogram = image.histogram
         let ms = Int((image.decodeTime * 1000).rounded())
         hintMaker = nil
         let (pw, ph) = (image.preview.width, image.preview.height)
-        setDecodeText { fromCache
+        let (fw, fh) = (Int(image.displaySize.width), Int(image.displaySize.height))
+        setDecodeText { developed
+            ? L("RAW проявлено за %d мс · %d×%d", ms, fw, fh)
+            : fromCache
             ? L("З кешу (декодовано за %d мс)", ms)
             : L("Декодовано за %d мс · прев'ю %d×%d", ms, pw, ph) }
         updateOverlay()
@@ -290,6 +306,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             parts.append("( \(details) )")
         }
         parts.append("[ \(index + 1) / \(files.count) ]")
+        if rawShownFor == files[index] {
+            parts.append("[ RAW ]")
+        } else if rawDeveloping == files[index] {
+            parts.append("[ RAW… ]")
+        }
         if canvas.hasImage {
             parts.append("\(Int((canvas.zoom * 100).rounded()))%")
         }
@@ -339,11 +360,17 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let needed = canvas.zoom * max(cur.displaySize.width, cur.displaySize.height)
         let have = CGFloat(max(cur.preview.width, cur.preview.height))
         if needed > have * 1.02 {
-            guard !showingFull, fullRequestedFor != cur.url else { return }
+            guard !showingFull else { return }
+            if rawShownFor == cur.url, let full = loader.developedFull(cur.url) {
+                canvas.replaceImage(full)
+                showingFull = true
+                return
+            }
+            guard fullRequestedFor != cur.url else { return }
             fullRequestedFor = cur.url
             let url = cur.url
             loader.loadFull(url) { [weak self] image in
-                guard let self, self.current?.url == url, self.fullRequestedFor == url else { return }
+                guard let self, self.current?.url == url, self.fullRequestedFor == url, self.rawShownFor != url else { return }
                 self.fullRequestedFor = nil
                 guard let image else {
                     self.setDecodeText { L("Не вдалося завантажити оригінал") }
@@ -360,6 +387,37 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             if showingFull {
                 canvas.replaceImage(cur.preview)
                 showingFull = false
+            }
+        }
+    }
+
+    // MARK: - Проявка RAW (клавіша A)
+
+    /// A: проявити поточне RAW-фото (лише його). Повторне A — назад до вбудованого JPEG.
+    func toggleRawDevelop() {
+        guard files.indices.contains(index) else { return }
+        let url = files[index]
+        guard ImageLoader.isRaw(url) else { NSSound.beep(); return }
+
+        if rawShownFor == url {
+            rawShownFor = nil
+            if let embedded = loader.cached(url) { display(embedded, fromCache: true) } else { showCurrent() }
+            updateOverlay()
+            return
+        }
+        guard rawDeveloping != url else { return }
+        rawDeveloping = url
+        updateOverlay()
+        setDecodeText { L("Проявка RAW…") }
+        loader.loadDeveloped(url, priority: .veryHigh) { [weak self] image in
+            guard let self, self.files.indices.contains(self.index), self.files[self.index] == url,
+                  self.rawDeveloping == url else { return }
+            self.rawDeveloping = nil
+            if let image {
+                self.display(image, fromCache: false, developed: true)
+            } else {
+                self.setDecodeText { L("Не вдалося проявити RAW") }
+                self.updateOverlay()
             }
         }
     }
@@ -592,6 +650,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             NSApp.terminate(nil)
         case 34, 48: togglePanel()                      // I, Tab
         case 17: canvas.isOverlayEnabled.toggle()       // T — рядок зверху
+        case 0: toggleRawDevelop()                      // A — проявити RAW
         case 6, 18: toggleActualSize()                  // Z, 1
         case 29: fit()                                  // 0
         case 24, 69: zoomIn()                           // = / +

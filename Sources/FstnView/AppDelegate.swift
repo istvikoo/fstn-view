@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc func toggleInfoPanel(_ sender: Any?) { viewer().togglePanel() }
     @objc func fitToWindow(_ sender: Any?) { viewer().fit() }
+    @objc func toggleRawDevelop(_ sender: Any?) { viewer().toggleRawDevelop() }
     @objc func actualSize(_ sender: Any?) { viewer().toggleActualSize() }
     @objc func zoomIn(_ sender: Any?) { viewer().zoomIn() }
     @objc func zoomOut(_ sender: Any?) { viewer().zoomOut() }
@@ -135,6 +136,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         _ = submenu(L("Вигляд")) { m in
             add(m, L("Закріпити інформаційну панель (I)"), #selector(toggleInfoPanel(_:)), "i")
+            m.addItem(.separator())
+            add(m, L("Проявити RAW / вбудований JPEG (A)"), #selector(toggleRawDevelop(_:)))
             m.addItem(.separator())
             add(m, L("Вписати у вікно (0)"), #selector(fitToWindow(_:)), "0")
             add(m, L("Реальний розмір 100% (Z)"), #selector(actualSize(_:)), "1")

@@ -69,6 +69,12 @@ private let english: [String: String] = [
     "Як у системі": "System Default",
     "Оберіть зображення або папку": "Choose an image or a folder",
 
+    // RAW
+    "Проявити RAW / вбудований JPEG (A)": "Develop RAW / Embedded JPEG (A)",
+    "RAW проявлено за %d мс · %d×%d": "RAW developed in %d ms · %d×%d",
+    "Проявка RAW…": "Developing RAW…",
+    "Не вдалося проявити RAW": "Couldn’t develop RAW",
+
     // Типова програма
     "Зробити типовою для фото…": "Make Default for Photos…",
     "Зробити %@ типовою програмою для фото?": "Make %@ the default app for photos?",
