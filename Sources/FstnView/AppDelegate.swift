@@ -24,6 +24,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         NSApp.activate(ignoringOtherApps: true)
         Updater.shared.checkOnLaunch()
+        // Перший запуск: запропонувати стати типовою програмою для фото
+        // (з невеликою паузою, щоб вікно встигло розгорнутися на весь екран)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            DefaultAppSetup.promptOnFirstLaunch()
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -61,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func firstImage(_ sender: Any?) { viewer().goTo(first: true) }
     @objc func lastImage(_ sender: Any?) { viewer().goTo(first: false) }
     @objc func checkForUpdates(_ sender: Any?) { Updater.shared.check(silent: false) }
+    @objc func makeDefaultApp(_ sender: Any?) { DefaultAppSetup.showDialog() }
 
     @objc func chooseLanguage(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let lang = AppLanguage(rawValue: raw) else { return }
@@ -106,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         _ = submenu(AppInfo.name) { m in
             add(m, L("Про %@", AppInfo.name), #selector(NSApplication.orderFrontStandardAboutPanel(_:)), target: NSApp)
             add(m, L("Перевірити оновлення…"), #selector(checkForUpdates(_:)))
+            add(m, L("Зробити типовою для фото…"), #selector(makeDefaultApp(_:)))
             m.addItem(.separator())
             add(m, L("Сховати %@", AppInfo.name), #selector(NSApplication.hide(_:)), "h", target: NSApp)
             add(m, L("Сховати інші"), #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], target: NSApp)

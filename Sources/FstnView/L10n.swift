@@ -69,6 +69,22 @@ private let english: [String: String] = [
     "Як у системі": "System Default",
     "Оберіть зображення або папку": "Choose an image or a folder",
 
+    // Типова програма
+    "Зробити типовою для фото…": "Make Default for Photos…",
+    "Зробити %@ типовою програмою для фото?": "Make %@ the default app for photos?",
+    "Оберіть, які файли відкривати подвійним кліком у %@. Змінити вибір можна будь-коли в меню %@.": "Choose which files open in %@ when you double-click them. You can change this any time from the %@ menu.",
+    "Звичайні фото (JPEG, HEIC, PNG, TIFF, WebP…)": "Regular photos (JPEG, HEIC, PNG, TIFF, WebP…)",
+    "RAW (CR3, CR2, NEF, ARW, DNG, RAF…)": "RAW (CR3, CR2, NEF, ARW, DNG, RAF…)",
+    "вже типова": "already default",
+    "Зробити типовою": "Make Default",
+    "Не зараз": "Not Now",
+    "звичайних фото": "regular photos",
+    " і ": " and ",
+    "Готово": "Done",
+    "%@ тепер відкриває %@ подвійним кліком.": "%@ now opens %@ when you double-click them.",
+    "Не для всіх форматів вдалося": "Some formats couldn’t be changed",
+    "Не змінено для: %@": "Not changed for: %@",
+
     // Оновлення
     "Доступна нова версія %@ %@": "A new version of %@ is available: %@",
     "У вас версія %@.": "You have version %@.",

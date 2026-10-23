@@ -26,6 +26,9 @@ almost instantly and shows an info panel with EXIF data and a histogram.
    xattr -dr com.apple.quarantine "/Applications/fstn view.app"
    ```
 
+On first launch the app offers to become the default app for photos. You choose regular photos (JPEG, HEIC, PNG…), RAW files (CR3, NEF, ARW, DNG…) or both.
+You can change this later with **fstn view → Make Default for Photos…**.
+
 Requires macOS 14 Sonoma or later.
 
 ## Keyboard and mouse
