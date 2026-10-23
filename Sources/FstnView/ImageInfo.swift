@@ -102,7 +102,7 @@ struct ImageInfo {
             ("Дата", taken.map { Self.exifIn.date(from: $0).map { Self.dateOut.string(from: $0) } ?? $0 }),
             ("Витримка", Self.doubleValue(exif[kCGImagePropertyExifExposureTime]).map(Self.shutter)),
             ("Діафрагма", Self.doubleValue(exif[kCGImagePropertyExifFNumber]).map { "f/\(Self.trim($0))" }),
-            ("ISO", (exif[kCGImagePropertyExifISOSpeedRatings] as? [NSNumber])?.first.map { "\($0.intValue)" }),
+            ("ISO", Self.iso(exif).map { "\($0)" }),
             ("Фокусна", focal),
             ("Експокорекція", Self.doubleValue(exif[kCGImagePropertyExifExposureBiasValue]).map { $0 == 0 ? "0 EV" : String(format: "%+.1f EV", $0) }),
             ("Режим", Self.intValue(exif[kCGImagePropertyExifExposureProgram]).flatMap { Self.programs[$0] }.map { L($0) }),
@@ -144,6 +144,16 @@ struct ImageInfo {
         f.dateFormat = "yyyy:MM:dd HH:mm:ss"
         return f
     }()
+
+    /// ISO буває в різних полях: JPG і DNG — ISOSpeedRatings, а Canon CR3 — ISOSpeed / RecommendedExposureIndex.
+    private static func iso(_ exif: [CFString: Any]) -> Int? {
+        if let value = (exif[kCGImagePropertyExifISOSpeedRatings] as? [NSNumber])?.first?.intValue, value > 0 { return value }
+        for key in [kCGImagePropertyExifISOSpeed, kCGImagePropertyExifRecommendedExposureIndex,
+                    kCGImagePropertyExifStandardOutputSensitivity] {
+            if let value = intValue(exif[key]), value > 0 { return value }
+        }
+        return nil
+    }
 
     private static func intValue(_ v: Any?) -> Int? { (v as? NSNumber)?.intValue }
     private static func doubleValue(_ v: Any?) -> Double? { (v as? NSNumber)?.doubleValue }
