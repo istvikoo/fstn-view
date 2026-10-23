@@ -15,6 +15,19 @@ final class ImageCanvasView: NSView {
 
     /// Розмір оригіналу в пікселях.
     private(set) var imageSize: CGSize = .zero
+    /// Поворот на екрані: 0…3 — кількість поворотів на 90° за годинниковою стрілкою.
+    private(set) var rotation = 0
+    /// Розмір фото з урахуванням повороту.
+    private var viewSize: CGSize {
+        rotation % 2 == 1 ? CGSize(width: imageSize.height, height: imageSize.width) : imageSize
+    }
+
+    func setRotation(_ value: Int) {
+        rotation = ((value % 4) + 4) % 4
+        isFit = true
+        layoutImage()
+        onZoomChanged?()
+    }
     private(set) var isFit = true
     /// Масштаб: скільки фізичних пікселів екрана припадає на 1 піксель зображення (1 = 100%).
     private(set) var zoom: CGFloat = 1
@@ -89,8 +102,9 @@ final class ImageCanvasView: NSView {
 
     /// Масштаб «вписати»: не збільшуємо маленькі зображення понад 100%.
     var fitZoom: CGFloat {
-        guard imageSize.width > 0, imageSize.height > 0, bounds.width > 0, bounds.height > 0 else { return 1 }
-        return min(1, min(bounds.width / imageSize.width, bounds.height / imageSize.height) * backing)
+        let size = viewSize
+        guard size.width > 0, size.height > 0, bounds.width > 0, bounds.height > 0 else { return 1 }
+        return min(1, min(bounds.width / size.width, bounds.height / size.height) * backing)
     }
 
     // MARK: - Публічне API
@@ -168,15 +182,16 @@ final class ImageCanvasView: NSView {
         let ppp = pointsPerPixel
         let halfW = bounds.width / 2 / ppp
         let halfH = bounds.height / 2 / ppp
-        center.x = imageSize.width <= halfW * 2 ? imageSize.width / 2 : min(max(center.x, halfW), imageSize.width - halfW)
-        center.y = imageSize.height <= halfH * 2 ? imageSize.height / 2 : min(max(center.y, halfH), imageSize.height - halfH)
+        let size = viewSize
+        center.x = size.width <= halfW * 2 ? size.width / 2 : min(max(center.x, halfW), size.width - halfW)
+        center.y = size.height <= halfH * 2 ? size.height / 2 : min(max(center.y, halfH), size.height - halfH)
     }
 
     private func layoutImage() {
         guard imageSize.width > 0, imageSize.height > 0 else { return }
         if isFit {
             zoom = fitZoom
-            center = CGPoint(x: imageSize.width / 2, y: imageSize.height / 2)
+            center = CGPoint(x: viewSize.width / 2, y: viewSize.height / 2)
         }
         clampCenter()
         let ppp = pointsPerPixel
@@ -184,13 +199,19 @@ final class ImageCanvasView: NSView {
         func snap(_ v: CGFloat) -> CGFloat { (v * scale).rounded() / scale }
         let rect = CGRect(
             x: snap(bounds.midX - center.x * ppp),
-            y: snap(bounds.midY - (imageSize.height - center.y) * ppp),
-            width: snap(imageSize.width * ppp),
-            height: snap(imageSize.height * ppp)
+            y: snap(bounds.midY - (viewSize.height - center.y) * ppp),
+            width: snap(viewSize.width * ppp),
+            height: snap(viewSize.height * ppp)
         )
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        imageLayer.frame = rect
+        // Шар має розмір неповернутого фото; поворот — через transform навколо центру
+        imageLayer.setAffineTransform(.identity)
+        imageLayer.bounds = CGRect(x: 0, y: 0,
+                                   width: rotation % 2 == 1 ? rect.height : rect.width,
+                                   height: rotation % 2 == 1 ? rect.width : rect.height)
+        imageLayer.position = CGPoint(x: rect.midX, y: rect.midY)
+        imageLayer.setAffineTransform(CGAffineTransform(rotationAngle: -CGFloat(rotation) * .pi / 2))
         imageLayer.magnificationFilter = zoom >= 2 ? .nearest : .linear
         imageLayer.minificationFilter = .trilinear
         CATransaction.commit()

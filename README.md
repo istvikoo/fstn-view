@@ -13,7 +13,9 @@ almost instantly and shows an info panel with EXIF data and a histogram.
 - **Info line** in the top-left corner: file name, dimensions, megapixels, file size, position in folder and zoom (like FastStone).
 - **Zoom.** Click to toggle 100% at the clicked point. Press and hold to zoom only while the button is down, and drag to look around.
 - **Develop RAW on demand.** RAW files are shown from their embedded JPEG for speed. Press `A` to develop the current RAW file with the macOS RAW engine (about 0.5 s); 100% zoom then shows the developed image too. Press `A` again to go back. Some cameras (for example Sony ARW) embed only a small preview, so it looks softer full screen until you press `A`.
-- **Delete to Trash** with `Delete` / `Backspace`. The app asks for confirmation (with a *Don’t show again* option), and `⌘Z` restores the last deleted photo.
+- **Delete to Trash** with `Delete` / `Backspace`. The app asks for confirmation (with a *Don’t show again* option), and `⌘Z` restores the last deleted photo. RAW+JPEG pairs with the same name (`IMG_0001.CR3` + `IMG_0001.JPG`) are deleted and restored together.
+- **Rotate** with `L` / `R` (on screen only, files are not changed).
+- **Open in another app** (Lightroom, Photoshop, DxO…) with `E`; the app is chosen the first time. **Show in Finder** with `⌘R`.
 - **Full screen on launch.** `Esc` quits.
 - **English and Ukrainian UI.** Switch it in the *Language* menu without restarting.
 - **Built-in updates** from GitHub Releases.
@@ -48,6 +50,9 @@ Requires macOS 14 Sonoma or later.
 | Show / hide info line | `T` |
 | Develop current RAW / back to embedded JPEG | `A` |
 | Move to Trash / restore | `Delete` or `Backspace` / `⌘Z` |
+| Rotate left / right | `L` / `R` |
+| Open in another app | `E` |
+| Show in Finder | `⌘R` |
 | Leave or enter full screen | `F` or `Enter` |
 | Quit | `Esc` |
 | Open file or folder | `⌘O` |

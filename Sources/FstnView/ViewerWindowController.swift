@@ -34,8 +34,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private var rawDeveloping: URL?
     /// Фото, для якого на екрані вбудований JPEG камери замість типової проявки (A на Sony ARW тощо).
     private var embeddedShownFor: URL?
-    /// Видалені в Кошик фото (для ⌘Z).
-    private var deleted: [(original: URL, trashed: URL)] = []
+    /// Видалені в Кошик фото (для ⌘Z). Одна група — одне видалення (напр. пара RAW+JPEG).
+    private var deleted: [[(original: URL, trashed: URL)]] = []
+    /// Поворот кожного фото на екрані (L / R), поки програма відкрита.
+    private var rotations: [URL: Int] = [:]
     private var listingToken = UUID()
     private let loader = ImageLoader.shared
 
@@ -213,6 +215,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         current = nil                     // щоб зум не взяв оригінал попереднього фото
         quickShownFor = quick.url
         hintMaker = nil
+        canvas.setRotation(rotations[quick.url] ?? 0)
         canvas.setImage(quick.image, size: quick.displaySize, resetView: true)
         state.fileName = quick.url.lastPathComponent
         state.info = quick.info
@@ -231,6 +234,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         quickShownFor = nil
         rawShownFor = developed ? image.url : nil
         embeddedShownFor = embedded ? image.url : nil
+        if !keepView { canvas.setRotation(rotations[image.url] ?? 0) }
         canvas.setImage(image.preview, size: image.displaySize, resetView: !keepView)
         // Оригінал для зуму вантажимо, лише якщо користувач затримався на фото (не під час швидкого гортання).
         // Для проявленого RAW оригінал уже є.
@@ -466,9 +470,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
+        let names = ([url] + companions(of: url)).map { $0.lastPathComponent }.joined(separator: ", ")
         let alert = NSAlert()
         alert.messageText = L("Перемістити фото в Кошик?")
-        alert.informativeText = L("«%@» буде переміщено в Кошик, а не видалено назавжди. Повернути фото можна з Кошика або клавішами ⌘Z, поки програма відкрита.", url.lastPathComponent)
+        alert.informativeText = L("«%@» буде переміщено в Кошик, а не видалено назавжди. Повернути фото можна з Кошика або клавішами ⌘Z, поки програма відкрита.", names)
         alert.addButton(withTitle: L("Перемістити в Кошик"))
         alert.addButton(withTitle: L("Скасувати")).keyEquivalent = "\u{1b}"   // Esc — скасувати
         alert.showsSuppressionButton = true
@@ -491,22 +496,39 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// Переміщує фото в Кошик і показує наступне.
+    /// Пара до фото: файл з тим самим іменем, але іншим розширенням, якщо один із них RAW
+    /// (IMG_3447.CR3 + IMG_3447.JPG). Видаляються і відновлюються разом.
+    private func companions(of url: URL) -> [URL] {
+        let base = url.deletingPathExtension().lastPathComponent.lowercased()
+        let folder = url.deletingLastPathComponent().standardizedFileURL.path
+        return files.filter { other in
+            other != url
+                && other.deletingPathExtension().lastPathComponent.lowercased() == base
+                && other.deletingLastPathComponent().standardizedFileURL.path == folder
+                && (ImageLoader.isRaw(other) != ImageLoader.isRaw(url))
+        }
+    }
+
+    /// Переміщує фото (разом із парою RAW+JPEG) в Кошик і показує наступне.
     private func moveToTrash(_ url: URL) {
-        NSWorkspace.shared.recycle([url]) { [weak self] trashed, error in
+        let group = [url] + companions(of: url)
+        NSWorkspace.shared.recycle(group) { [weak self] trashed, error in
             DispatchQueue.main.async {
                 guard let self else { return }
-                if let error {
+                let moved = group.compactMap { original in trashed[original].map { (original: original, trashed: $0) } }
+                if !moved.isEmpty { self.deleted.append(moved) }
+                if let error, moved.isEmpty {
                     self.showError(L("Не вдалося перемістити «%@» у Кошик", url.lastPathComponent), error)
                     return
                 }
-                if let trashedURL = trashed[url] {
-                    self.deleted.append((original: url, trashed: trashedURL))
+                let removed = Set(moved.map { $0.original })
+                for u in removed {
+                    self.loader.forget(u)
+                    ThumbnailCache.shared.forget(u)
                 }
-                self.loader.forget(url)
-                ThumbnailCache.shared.forget(url)
-                guard let i = self.files.firstIndex(of: url) else { return }
-                self.files.remove(at: i)
+                let currentURL = self.files.indices.contains(self.index) ? self.files[self.index] : nil
+                let before = self.files.prefix(self.index).filter { removed.contains($0) }.count
+                self.files.removeAll { removed.contains($0) }
                 if self.files.isEmpty {
                     self.current = nil
                     self.index = 0
@@ -516,16 +538,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                     self.showHint { L("У папці більше немає зображень") }
                     return
                 }
-                if i < self.index {
-                    // Видалили файл перед поточним — поточне фото те саме, зсуваємо номер
-                    self.index -= 1
+                if let currentURL, !removed.contains(currentURL) {
+                    // Поточне фото лишилось — лише зсуваємо номер
+                    self.index = self.files.firstIndex(of: currentURL) ?? 0
                     self.updatePosition()
-                } else if i == self.index {
-                    // Видалили поточне — показуємо наступне (або попереднє, якщо це було останнє)
-                    self.index = min(self.index, self.files.count - 1)
-                    self.showCurrent()
                 } else {
-                    self.updatePosition()
+                    // Видалили поточне — показуємо наступне (або попереднє, якщо це було останнє)
+                    self.index = min(max(self.index - before, 0), self.files.count - 1)
+                    self.showCurrent()
                 }
             }
         }
@@ -533,27 +553,86 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     var canUndoDelete: Bool { !deleted.isEmpty }
 
-    /// ⌘Z: повертає останнє видалене фото з Кошика на старе місце.
+    /// ⌘Z: повертає останнє видалене (разом із парою) з Кошика на старе місце.
     func undoDelete() {
-        guard let last = deleted.popLast() else { NSSound.beep(); return }
-        do {
-            try FileManager.default.moveItem(at: last.trashed, to: last.original)
-        } catch {
-            showError(L("Не вдалося відновити «%@»", last.original.lastPathComponent), error)
-            return
+        guard let group = deleted.popLast() else { NSSound.beep(); return }
+        var restored: [URL] = []
+        for item in group {
+            do {
+                try FileManager.default.moveItem(at: item.trashed, to: item.original)
+                restored.append(item.original)
+            } catch {
+                showError(L("Не вдалося відновити «%@»", item.original.lastPathComponent), error)
+            }
         }
+        guard let first = restored.first else { return }
         // Повертаємо у список, якщо переглядаємо ту саму папку
-        let folder = last.original.deletingLastPathComponent().standardizedFileURL.path
+        let folder = first.deletingLastPathComponent().standardizedFileURL.path
         let currentFolder = files.first?.deletingLastPathComponent().standardizedFileURL.path
         if currentFolder == nil || currentFolder == folder {
-            let name = last.original.lastPathComponent
-            let pos = files.firstIndex { $0.lastPathComponent.localizedStandardCompare(name) == .orderedDescending } ?? files.count
-            files.insert(last.original, at: pos)
-            index = pos
+            for u in restored {
+                let name = u.lastPathComponent
+                let pos = files.firstIndex { $0.lastPathComponent.localizedStandardCompare(name) == .orderedDescending } ?? files.count
+                files.insert(u, at: pos)
+            }
+            index = files.firstIndex(of: first) ?? 0
             showCurrent()
         } else {
-            open(last.original)
+            open(first)
         }
+    }
+
+    // MARK: - Поворот, Finder, інша програма
+
+    /// L / R: повернути фото на екрані на 90°.
+    func rotate(by step: Int) {
+        guard files.indices.contains(index) else { return }
+        let url = files[index]
+        let value = (((rotations[url] ?? 0) + step) % 4 + 4) % 4
+        rotations[url] = value
+        canvas.setRotation(value)
+    }
+
+    /// ⌘R: показати поточний файл у Finder.
+    func showInFinder() {
+        guard files.indices.contains(index) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([files[index]])
+    }
+
+    private static let editorKey = "externalEditorPath"
+
+    var externalEditorName: String? {
+        guard let path = UserDefaults.standard.string(forKey: Self.editorKey) else { return nil }
+        return FileManager.default.displayName(atPath: path).replacingOccurrences(of: ".app", with: "")
+    }
+
+    /// E: відкрити поточне фото в обраній програмі (Lightroom, Photoshop, DxO…). Перший раз — спитати яку.
+    func openInExternalEditor() {
+        guard files.indices.contains(index) else { return }
+        let url = files[index]
+        if let path = UserDefaults.standard.string(forKey: Self.editorKey), FileManager.default.fileExists(atPath: path) {
+            if window?.styleMask.contains(.fullScreen) == true { window?.toggleFullScreen(nil) }
+            NSWorkspace.shared.open([url], withApplicationAt: URL(fileURLWithPath: path),
+                                    configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                if let error { DispatchQueue.main.async { self.showError(L("Не вдалося відкрити «%@»", url.lastPathComponent), error) } }
+            }
+        } else {
+            chooseExternalEditor(thenOpen: true)
+        }
+    }
+
+    func chooseExternalEditor(thenOpen: Bool = false) {
+        let panel = NSOpenPanel()
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.application]
+        panel.canChooseDirectories = false
+        panel.message = L("Оберіть програму, в якій відкривати фото клавішею E")
+        let done: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard let self, response == .OK, let app = panel.url else { return }
+            UserDefaults.standard.set(app.path, forKey: Self.editorKey)
+            if thenOpen { self.openInExternalEditor() }
+        }
+        if let window { panel.beginSheetModal(for: window, completionHandler: done) } else { done(panel.runModal()) }
     }
 
     private func showError(_ title: String, _ error: Error) {
@@ -681,6 +760,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         case 34, 48: togglePanel()                      // I, Tab
         case 17: canvas.isOverlayEnabled.toggle()       // T — рядок зверху
         case 0: toggleRawDevelop()                      // A — проявити RAW
+        case 37: rotate(by: -1)                         // L — повернути проти годинникової
+        case 15: rotate(by: 1)                          // R — повернути за годинниковою
+        case 14: openInExternalEditor()                 // E — відкрити в іншій програмі
         case 6, 18: toggleActualSize()                  // Z, 1
         case 29: fit()                                  // 0
         case 24, 69: zoomIn()                           // = / +

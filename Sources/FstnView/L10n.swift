@@ -76,6 +76,15 @@ private let english: [String: String] = [
     "Вбудований JPEG камери %d×%d": "Camera’s embedded JPEG %d×%d",
     "Не вдалося проявити RAW": "Couldn’t develop RAW",
 
+    // Поворот, Finder, інша програма
+    "Показати у Finder": "Show in Finder",
+    "Відкрити в іншій програмі (E)": "Open in Another App (E)",
+    "Відкрити в %@ (E)": "Open in %@ (E)",
+    "Обрати програму для E…": "Choose App for E…",
+    "Оберіть програму, в якій відкривати фото клавішею E": "Choose the app to open photos in with the E key",
+    "Повернути ліворуч (L)": "Rotate Left (L)",
+    "Повернути праворуч (R)": "Rotate Right (R)",
+
     // Типова програма
     "Зробити типовою для фото…": "Make Default for Photos…",
     "Зробити %@ типовою програмою для фото?": "Make %@ the default app for photos?",

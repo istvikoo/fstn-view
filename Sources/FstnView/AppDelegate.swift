@@ -59,6 +59,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func toggleInfoPanel(_ sender: Any?) { viewer().togglePanel() }
     @objc func fitToWindow(_ sender: Any?) { viewer().fit() }
     @objc func toggleRawDevelop(_ sender: Any?) { viewer().toggleRawDevelop() }
+    @objc func rotateLeft(_ sender: Any?) { viewer().rotate(by: -1) }
+    @objc func rotateRight(_ sender: Any?) { viewer().rotate(by: 1) }
+    @objc func showInFinder(_ sender: Any?) { viewer().showInFinder() }
+    @objc func openInEditor(_ sender: Any?) { viewer().openInExternalEditor() }
+    @objc func chooseEditor(_ sender: Any?) { viewer().chooseExternalEditor() }
     @objc func actualSize(_ sender: Any?) { viewer().toggleActualSize() }
     @objc func zoomIn(_ sender: Any?) { viewer().zoomIn() }
     @objc func zoomOut(_ sender: Any?) { viewer().zoomOut() }
@@ -81,6 +86,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(toggleInfoPanel(_:)) {
             menuItem.state = (controller?.isPanelPinned ?? false) ? .on : .off
+        }
+        if menuItem.action == #selector(openInEditor(_:)) {
+            let name = controller?.externalEditorName
+            menuItem.title = name.map { L("Відкрити в %@ (E)", $0) } ?? L("Відкрити в іншій програмі (E)")
         }
         if menuItem.action == #selector(undoDelete(_:)) {
             return controller?.canUndoDelete ?? false
@@ -123,6 +132,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         _ = submenu(L("Файл")) { m in
             add(m, L("Відкрити…"), #selector(openDocument(_:)), "o")
+            add(m, L("Показати у Finder"), #selector(showInFinder(_:)), "r")
+            m.addItem(.separator())
+            add(m, L("Відкрити в іншій програмі (E)"), #selector(openInEditor(_:)))
+            add(m, L("Обрати програму для E…"), #selector(chooseEditor(_:)))
             m.addItem(.separator())
             let close = NSMenuItem(title: L("Закрити вікно"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
             m.addItem(close)
@@ -138,6 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             add(m, L("Закріпити інформаційну панель (I)"), #selector(toggleInfoPanel(_:)), "i")
             m.addItem(.separator())
             add(m, L("Проявити RAW / вбудований JPEG (A)"), #selector(toggleRawDevelop(_:)))
+            add(m, L("Повернути ліворуч (L)"), #selector(rotateLeft(_:)))
+            add(m, L("Повернути праворуч (R)"), #selector(rotateRight(_:)))
             m.addItem(.separator())
             add(m, L("Вписати у вікно (0)"), #selector(fitToWindow(_:)), "0")
             add(m, L("Реальний розмір 100% (Z)"), #selector(actualSize(_:)), "1")
