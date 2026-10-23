@@ -60,6 +60,8 @@ final class ThumbnailStripView: NSVisualEffectView, NSCollectionViewDataSource {
     static let height: CGFloat = 104
 
     var onSelect: ((Int) -> Void)?
+    /// Чи смуга зараз виїхала на екран (керує вікно).
+    var isOnScreen = false
 
     private let scrollView = HorizontalScrollView()
     private let collectionView = PassiveCollectionView()
@@ -113,7 +115,7 @@ final class ThumbnailStripView: NSVisualEffectView, NSCollectionViewDataSource {
         for i in [old, index] where files.indices.contains(i) {
             (collectionView.item(at: IndexPath(item: i, section: 0)) as? ThumbnailItem)?.isCurrent = (i == index)
         }
-        if !isHidden && alphaValue > 0 { scrollToCurrent(animated: true) }
+        if isOnScreen { scrollToCurrent(animated: true) }
     }
 
     /// Прокрутити так, щоб поточна мініатюра була по центру.
@@ -134,6 +136,14 @@ final class ThumbnailStripView: NSVisualEffectView, NSCollectionViewDataSource {
             clip.setBoundsOrigin(target)
         }
         scrollView.reflectScrolledClipView(clip)
+    }
+
+    /// Примусово перемалювати видимі мініатюри. Картинки, які прийшли, поки смуга була за краєм екрана,
+    /// macOS могла не намалювати — після появи смуги малюємо їх ще раз.
+    func redrawVisible() {
+        for case let item as ThumbnailItem in collectionView.visibleItems() {
+            item.redraw()
+        }
     }
 
     // MARK: - NSCollectionViewDataSource
@@ -158,27 +168,16 @@ private final class ThumbnailItem: NSCollectionViewItem {
     var onClick: (() -> Void)?
     private var url: URL?
     private var loadOp: Operation?
-    private let thumb = NSImageView()
 
     var isCurrent = false {
-        didSet { updateBorder() }
+        didSet { thumbView?.isCurrent = isCurrent }
     }
 
+    private var thumbView: ThumbView? { view as? ThumbView }
+
     override func loadView() {
-        let v = ClickView()
-        v.wantsLayer = true
-        v.layer?.cornerRadius = 4
-        v.layer?.borderWidth = 2
+        let v = ThumbView()
         v.onClick = { [weak self] in self?.onClick?() }
-        thumb.imageScaling = .scaleProportionallyUpOrDown
-        thumb.translatesAutoresizingMaskIntoConstraints = false
-        v.addSubview(thumb)
-        NSLayoutConstraint.activate([
-            thumb.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 3),
-            thumb.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -3),
-            thumb.topAnchor.constraint(equalTo: v.topAnchor, constant: 3),
-            thumb.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -3),
-        ])
         view = v
     }
 
@@ -186,29 +185,79 @@ private final class ThumbnailItem: NSCollectionViewItem {
         self.url = url
         self.isCurrent = isCurrent
         loadOp?.cancel()
-        thumb.image = nil
+        thumbView?.image = nil
         view.toolTip = url.lastPathComponent
         loadOp = ThumbnailCache.shared.load(url) { [weak self] image in
             guard let self, self.url == url, let image else { return }
-            self.thumb.image = NSImage(cgImage: image, size: .zero)
+            self.thumbView?.image = image
         }
+    }
+
+    func redraw() {
+        thumbView?.refresh()
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
         loadOp?.cancel()
         loadOp = nil
-        thumb.image = nil
-    }
-
-    private func updateBorder() {
-        view.layer?.borderColor = isCurrent ? NSColor.controlAccentColor.cgColor : NSColor.clear.cgColor
-        view.layer?.backgroundColor = isCurrent ? NSColor.white.withAlphaComponent(0.12).cgColor : NSColor.clear.cgColor
+        thumbView?.image = nil
     }
 }
 
-private final class ClickView: NSView {
+/// Мініатюра малюється напряму в шар Core Animation (як головне фото), а не через NSImageView:
+/// так картинка з'являється одразу, навіть якщо прийшла, поки смуга була схована.
+private final class ThumbView: NSView {
     var onClick: (() -> Void)?
+    private let imageLayer = CALayer()
+
+    var image: CGImage? {
+        didSet { refresh() }
+    }
+
+    var isCurrent = false {
+        didSet { updateBorder() }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .never
+        layer?.cornerRadius = 4
+        layer?.borderWidth = 2
+        imageLayer.contentsGravity = .resizeAspect
+        imageLayer.minificationFilter = .trilinear
+        imageLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        layer?.addSublayer(imageLayer)
+        updateBorder()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func refresh() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        imageLayer.contents = image
+        imageLayer.frame = bounds.insetBy(dx: 3, dy: 3)
+        imageLayer.contentsScale = window?.backingScaleFactor ?? 2
+        CATransaction.commit()
+    }
+
+    override func layout() {
+        super.layout()
+        refresh()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refresh()
+    }
+
+    private func updateBorder() {
+        layer?.borderColor = isCurrent ? NSColor.controlAccentColor.cgColor : NSColor.clear.cgColor
+        layer?.backgroundColor = isCurrent ? NSColor.white.withAlphaComponent(0.12).cgColor : NSColor.clear.cgColor
+    }
+
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) { onClick?() }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

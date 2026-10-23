@@ -93,7 +93,6 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             strip.heightAnchor.constraint(equalToConstant: ThumbnailStripView.height),
             stripBottom,
         ])
-        strip.alphaValue = 0
         strip.onSelect = { [weak self] i in self?.goTo(index: i) }
         window.contentView = container
         container.onMouseMoved = { [weak self] point in self?.mouseMoved(to: point) }
@@ -479,15 +478,19 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private func setStripShown(_ shown: Bool) {
         guard stripShown != shown, let container = window?.contentView else { return }
         stripShown = shown
+        strip.isOnScreen = shown
         if shown { strip.scrollToCurrent(animated: false) }
-        NSAnimationContext.runAnimationGroup { ctx in
+        // Лише виїжджає знизу, без зміни прозорості: на повністю прозорій смузі
+        // macOS іноді не малює мініатюри, які встигли завантажитися.
+        NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.18
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             ctx.allowsImplicitAnimation = true
             stripBottom.animator().constant = shown ? 0 : ThumbnailStripView.height
-            strip.animator().alphaValue = shown ? 1 : 0
             container.layoutSubtreeIfNeeded()
-        }
+        }, completionHandler: { [weak self] in
+            if shown { self?.strip.redrawVisible() }
+        })
     }
 
     /// Перехід до фото за номером (клік по мініатюрі).
