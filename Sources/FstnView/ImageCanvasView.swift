@@ -36,6 +36,19 @@ final class ImageCanvasView: NSView {
     /// Точка зображення (у пікселях, y згори вниз), що знаходиться в центрі області.
     private var center: CGPoint = .zero
 
+    /// Масштаб і точка кадру (частка ширини й висоти), щоб показати наступне фото так само.
+    struct ViewState {
+        let zoom: CGFloat
+        let relativeCenter: CGPoint
+    }
+
+    /// Поточний зум, якщо фото збільшене (nil — вписане).
+    var viewState: ViewState? {
+        let size = viewSize
+        guard !isFit, hasImage, size.width > 0, size.height > 0 else { return nil }
+        return ViewState(zoom: zoom, relativeCenter: CGPoint(x: center.x / size.width, y: center.y / size.height))
+    }
+
     private var lastDrag: NSPoint?
     private var mouseDownPoint: NSPoint?
     private var didDrag = false
@@ -119,12 +132,19 @@ final class ImageCanvasView: NSView {
         onZoomChanged?()
     }
 
-    func setImage(_ image: CGImage, size: CGSize, resetView: Bool) {
+    /// `keeping` — показати нове фото в тому ж масштабі й точці, що й попереднє (порівняння серії).
+    func setImage(_ image: CGImage, size: CGSize, resetView: Bool, keeping state: ViewState? = nil) {
         hint.isHidden = true
         imageLayer.contents = image
         if resetView || imageSize != size {
             imageSize = size
             isFit = true
+            if let state, state.zoom > fitZoom + 0.0001 {
+                isFit = false
+                zoom = state.zoom
+                center = CGPoint(x: state.relativeCenter.x * viewSize.width,
+                                 y: state.relativeCenter.y * viewSize.height)
+            }
         }
         layoutImage()
         onZoomChanged?()
@@ -294,8 +314,9 @@ final class ImageCanvasView: NSView {
             return
         }
 
-        // Збільшене — прокрутка панорамує
-        if !isFit {
+        // Збільшене — прокрутка панорамує. Але з затиснутою кнопкою колесо гортає фото,
+        // зберігаючи зум (порівняння кадрів, як у FastStone).
+        if !isFit && mouseDownPoint == nil {
             let k: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 40
             let ppp = pointsPerPixel
             center.x -= event.scrollingDeltaX * k / ppp

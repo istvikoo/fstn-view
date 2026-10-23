@@ -46,6 +46,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     /// Поворот кожного фото на екрані (L / R), поки програма відкрита.
     private var rotations: [URL: Int] = [:]
     private var listingToken = UUID()
+    /// Зум, з яким показати наступне фото (гортання в збільшеному вигляді).
+    private var pendingView: ImageCanvasView.ViewState?
     private let loader = ImageLoader.shared
 
     private static let panelDefaultsKey = "infoPanelPinned"
@@ -252,9 +254,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Перегляд
 
-    private func showCurrent() {
+    /// `keepingView` — показати фото в тому ж масштабі й точці, що й попереднє.
+    private func showCurrent(keepingView: ImageCanvasView.ViewState? = nil) {
         guard files.indices.contains(index) else { return }
         let url = files[index]
+        pendingView = keepingView
         updatePosition()
         window?.title = url.lastPathComponent
         window?.representedURL = url
@@ -267,6 +271,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
         if let hit = loader.cached(url) {
             display(hit, fromCache: true)
+            // Порівняння у збільшеному вигляді: якщо RAW цього фото вже проявляли (A), показуємо його
+            if keepingView != nil, ImageLoader.isRaw(url) || pairedRaw[url] != nil,
+               let dev = loader.cachedDeveloped(pairedRaw[url] ?? url) {
+                display(pairedRaw[url] == nil ? dev : dev.shown(as: url), fromCache: true, developed: true)
+            }
         } else {
             loader.load(url, priority: .veryHigh, onQuick: { [weak self] quick in
                 guard let self, self.files.indices.contains(self.index), self.files[self.index] == url,
@@ -294,7 +303,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         quickShownFor = quick.url
         hintMaker = nil
         canvas.setRotation(rotations[quick.url] ?? 0)
-        canvas.setImage(quick.image, size: quick.displaySize, resetView: true)
+        canvas.setImage(quick.image, size: quick.displaySize, resetView: true, keeping: pendingView)
         state.fileName = quick.url.lastPathComponent
         state.info = infoWithPair(quick.info, for: quick.url)
         state.histogram = nil
@@ -313,7 +322,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         rawShownFor = developed ? image.url : nil
         embeddedShownFor = embedded ? image.url : nil
         if !keepView { canvas.setRotation(rotations[image.url] ?? 0) }
-        canvas.setImage(image.preview, size: image.displaySize, resetView: !keepView)
+        canvas.setImage(image.preview, size: image.displaySize, resetView: !keepView, keeping: keepView ? nil : pendingView)
         // Оригінал для зуму вантажимо, лише якщо користувач затримався на фото (не під час швидкого гортання).
         // Для проявленого RAW оригінал уже є.
         fullPrefetch?.cancel()
@@ -432,7 +441,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         guard target != index else { NSSound.beep(); return }
         direction = step >= 0 ? 1 : -1
         index = target
-        showCurrent()
+        // Збільшене фото — наступне показуємо в тому ж масштабі й точці (порівняння кадрів)
+        showCurrent(keepingView: canvas.viewState)
     }
 
     func goTo(first: Bool) {
@@ -477,6 +487,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 self.showingFull = true
                 let (fw, fh) = (image.width, image.height)
                 self.setDecodeText { L("Оригінал %d×%d", fw, fh) }
+                self.prefetchNextFull()
             }
         } else {
             // Повернулися до малого масштабу — назад на прев'ю (воно чіткіше при зменшенні)
@@ -486,6 +497,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 showingFull = false
             }
         }
+    }
+
+    /// Поки фото збільшене, наперед вантажимо оригінал наступного — гортання в зумі без розмитого прев'ю.
+    private func prefetchNextFull() {
+        guard !canvas.isFit else { return }
+        let next = index + direction
+        guard files.indices.contains(next) else { return }
+        loader.loadFull(files[next], completion: nil)
     }
 
     // MARK: - Проявка RAW (клавіша A)
