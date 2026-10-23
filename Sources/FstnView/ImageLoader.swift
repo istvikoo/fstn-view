@@ -12,8 +12,12 @@ final class LoadedImage {
     let info: ImageInfo
     let histogram: Histogram?
     let decodeTime: Double
+    /// RAW, у якого вбудований JPEG замалий (напр. Sony ARW — 1616 px), тому показано проявлений RAW.
+    let isDevelopedRAW: Bool
 
-    init(url: URL, preview: CGImage, displaySize: CGSize, info: ImageInfo, histogram: Histogram?, decodeTime: Double) {
+    init(url: URL, preview: CGImage, displaySize: CGSize, info: ImageInfo, histogram: Histogram?, decodeTime: Double,
+         isDevelopedRAW: Bool = false) {
+        self.isDevelopedRAW = isDevelopedRAW
         self.url = url
         self.preview = preview
         self.displaySize = displaySize
@@ -355,6 +359,8 @@ final class ImageLoader {
                 preview = embedded
             }
         }
+        // Вбудованого JPEG немає або він замалий для екрана — проявляємо сам RAW
+        let developedFromRaw = isRaw && preview == nil
         if preview == nil {
             preview = makeThumbnail(source, maxPixel: target, fromImageAlways: true)
         }
@@ -363,7 +369,8 @@ final class ImageLoader {
         let size = displaySize(info: info, image: preview)
         let histogram = Histogram.compute(from: preview)
         let elapsed = CFAbsoluteTimeGetCurrent() - start
-        return LoadedImage(url: url, preview: preview, displaySize: size, info: info, histogram: histogram, decodeTime: elapsed)
+        return LoadedImage(url: url, preview: preview, displaySize: size, info: info, histogram: histogram, decodeTime: elapsed,
+                           isDevelopedRAW: developedFromRaw)
     }
 
     /// Розмір прев'ю. Якщо оригінал можна зменшити рівно вдвічі (вчетверо…) приблизно до розміру екрана —
@@ -407,6 +414,19 @@ final class ImageLoader {
         guard let image = makeThumbnail(source, maxPixel: quickSide, fromImageAlways: !isRaw) else { return nil }
         return QuickPreview(url: url, image: image, displaySize: displaySize(info: info, image: image), info: info,
                             decodeTime: CFAbsoluteTimeGetCurrent() - start)
+    }
+
+    /// Вбудований JPEG камери як є (навіть якщо він маленький) — для клавіші A на файлах на кшталт Sony ARW.
+    static func decodeEmbedded(url: URL) -> LoadedImage? {
+        let start = CFAbsoluteTimeGetCurrent()
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetCount(source) > 0 else { return nil }
+        let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+        let info = ImageInfo.make(url: url, source: source, props: props)
+        let fullSide = Int(max(info.pixelSize.width, info.pixelSize.height))
+        guard fullSide > 0, let embedded = makeThumbnail(source, maxPixel: fullSide, fromImageAlways: false) else { return nil }
+        return LoadedImage(url: url, preview: embedded, displaySize: displaySize(info: info, image: embedded), info: info,
+                           histogram: Histogram.compute(from: embedded), decodeTime: CFAbsoluteTimeGetCurrent() - start)
     }
 
     static func decodeFull(url: URL) -> CGImage? {

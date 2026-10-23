@@ -73,6 +73,7 @@ private let english: [String: String] = [
     "Проявити RAW / вбудований JPEG (A)": "Develop RAW / Embedded JPEG (A)",
     "RAW проявлено за %d мс · %d×%d": "RAW developed in %d ms · %d×%d",
     "Проявка RAW…": "Developing RAW…",
+    "Вбудований JPEG камери %d×%d": "Camera’s embedded JPEG %d×%d",
     "Не вдалося проявити RAW": "Couldn’t develop RAW",
 
     // Типова програма
