@@ -26,6 +26,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private var current: LoadedImage?
     private var fullRequestedFor: URL?
     private var showingFull = false
+    /// Фото, для якого зараз на екрані швидке прев'ю (чекаємо чітке).
+    private var quickShownFor: URL?
+    private var fullPrefetch: DispatchWorkItem?
     /// Видалені в Кошик фото (для ⌘Z).
     private var deleted: [(original: URL, trashed: URL)] = []
     private var listingToken = UUID()
@@ -175,7 +178,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         if let hit = loader.cached(url) {
             display(hit, fromCache: true)
         } else {
-            loader.load(url, priority: .veryHigh) { [weak self] image in
+            loader.load(url, priority: .veryHigh, onQuick: { [weak self] quick in
+                guard let self, self.files.indices.contains(self.index), self.files[self.index] == url,
+                      self.current?.url != url else { return }
+                self.showQuick(quick)
+            }) { [weak self] image in
                 guard let self, self.files.indices.contains(self.index), self.files[self.index] == url else { return }
                 if let image {
                     self.display(image, fromCache: false)
@@ -191,13 +198,35 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         preloadNeighbors()
     }
 
+    /// Перший етап: показати швидке прев'ю, поки декодується чітке.
+    private func showQuick(_ quick: QuickPreview) {
+        current = nil                     // щоб зум не взяв оригінал попереднього фото
+        quickShownFor = quick.url
+        hintMaker = nil
+        canvas.setImage(quick.image, size: quick.displaySize, resetView: true)
+        state.fileName = quick.url.lastPathComponent
+        state.info = quick.info
+        state.histogram = nil
+        updateOverlay()
+    }
+
     private func display(_ image: LoadedImage, fromCache: Bool) {
         current = image
         showingFull = false
         fullRequestedFor = nil
-        // Оригінал вантажимо наперед, щоб зум кнопкою миші був миттєвим
-        loader.loadFull(image.url, completion: nil)
-        canvas.setImage(image.preview, size: image.displaySize, resetView: true)
+        // Якщо вже показане швидке прев'ю цього фото — просто підміняємо його чітким, не скидаючи зум
+        let keepView = quickShownFor == image.url
+        quickShownFor = nil
+        canvas.setImage(image.preview, size: image.displaySize, resetView: !keepView)
+        // Оригінал для зуму вантажимо, лише якщо користувач затримався на фото (не під час швидкого гортання)
+        fullPrefetch?.cancel()
+        let url = image.url
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.current?.url == url else { return }
+            self.loader.loadFull(url, completion: nil)
+        }
+        fullPrefetch = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
         state.fileName = image.url.lastPathComponent
         state.info = image.info
         state.histogram = image.histogram
@@ -207,6 +236,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         setDecodeText { fromCache
             ? L("З кешу (декодовано за %d мс)", ms)
             : L("Декодовано за %d мс · прев'ю %d×%d", ms, pw, ph) }
+        updateOverlay()
     }
 
     private func clearInfo() {
@@ -251,10 +281,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             return
         }
         var parts = [files[index].lastPathComponent]
-        if let cur = current, cur.url == files[index] {
-            let w = Int(cur.info.pixelSize.width), h = Int(cur.info.pixelSize.height)
+        if let info = state.info, info.url == files[index] {
+            let w = Int(info.pixelSize.width), h = Int(info.pixelSize.height)
             var details = "\(w) x \(h) = \(String(format: "%.2f", Double(w * h) / 1_000_000)) MP"
-            if let bytes = cur.info.fileSize {
+            if let bytes = info.fileSize {
                 details += " , " + ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
             }
             parts.append("( \(details) )")

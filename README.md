@@ -6,7 +6,7 @@ almost instantly and shows an info panel with EXIF data and a histogram.
 
 ## Features
 
-- **Fast opening.** Images are decoded straight to screen size. For RAW files the embedded full-size JPEG preview is used, so a 30 MP CR3 opens in about 0.15 s.
+- **Fast opening.** A lower-resolution preview appears in about 35 ms and is replaced by the sharp image a moment later. Images are decoded straight to screen size, and for RAW files the embedded full-size JPEG preview is used.
 - **Instant browsing.** Neighbouring images are preloaded, so the arrow keys switch photos without delay.
 - **Info panel** (EXIF, camera, lens, exposure, GPS, RGB histogram). It slides in when you move the mouse to the right edge, and you can pin it with `I`.
 - **Thumbnail strip.** It slides up when you move the mouse to the bottom edge; click a thumbnail to open that photo.

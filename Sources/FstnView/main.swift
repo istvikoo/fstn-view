@@ -7,8 +7,11 @@ if args.count >= 3, args[1] == "--bench" {
     // "fstn view" --bench <файли…>: двічі декодує кожен файл (холодний і теплий запуск)
     for path in args.dropFirst(2) {
         let url = URL(fileURLWithPath: path)
-        let times = (0..<2).map { _ in ImageLoader.decodePreview(url: url, maxPixel: ImageLoader.shared.previewMaxPixel).map { Int($0.decodeTime * 1000) } ?? -1 }
-        print("\(url.lastPathComponent): \(times[0]) мс, повторно \(times[1]) мс")
+        let maxPixel = ImageLoader.shared.previewMaxPixel
+        let times = (0..<2).map { _ in ImageLoader.decodePreview(url: url, maxPixel: maxPixel).map { Int($0.decodeTime * 1000) } ?? -1 }
+        let quick = ImageLoader.decodeQuick(url: url, maxPixel: maxPixel)
+        let quickText = quick.map { "швидке \($0.image.width)×\($0.image.height) за \(Int($0.decodeTime * 1000)) мс, " } ?? "без швидкого етапу, "
+        print("\(url.lastPathComponent): \(quickText)чітке \(times[0]) мс, повторно \(times[1]) мс")
     }
     exit(0)
 }

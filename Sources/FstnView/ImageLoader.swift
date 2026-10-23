@@ -24,6 +24,15 @@ final class LoadedImage {
     var cost: Int { preview.bytesPerRow * preview.height }
 }
 
+/// Перший, швидкий етап показу: менша роздільність, поки декодується чітке прев'ю.
+struct QuickPreview {
+    let url: URL
+    let image: CGImage
+    let displaySize: CGSize
+    let info: ImageInfo
+    let decodeTime: Double
+}
+
 /// Швидке завантаження: декодування одразу під розмір екрана, кеш і попереднє завантаження сусідніх файлів.
 final class ImageLoader {
     static let shared = ImageLoader()
@@ -81,13 +90,13 @@ final class ImageLoader {
 
     private let cache: NSCache<NSURL, LoadedImage> = {
         let c = NSCache<NSURL, LoadedImage>()
-        c.totalCostLimit = 700 * 1024 * 1024
+        c.totalCostLimit = 500 * 1024 * 1024
         return c
     }()
 
     private let fullCache: NSCache<NSURL, CGImage> = {
         let c = NSCache<NSURL, CGImage>()
-        c.totalCostLimit = 900 * 1024 * 1024
+        c.totalCostLimit = 600 * 1024 * 1024
         return c
     }()
 
@@ -123,7 +132,11 @@ final class ImageLoader {
         cache.object(forKey: url as NSURL)
     }
 
-    func load(_ url: URL, priority: Operation.QueuePriority, completion: ((LoadedImage?) -> Void)?) {
+    /// onQuick — якщо задано, спершу швидко (~30 мс) віддається прев'ю в меншій роздільності,
+    /// а потім, як завжди, чітке через completion.
+    func load(_ url: URL, priority: Operation.QueuePriority,
+              onQuick: ((QuickPreview) -> Void)? = nil,
+              completion: ((LoadedImage?) -> Void)?) {
         if let hit = cache.object(forKey: url as NSURL) {
             completion?(hit)
             return
@@ -139,6 +152,14 @@ final class ImageLoader {
         let entry = Pending(op: op)
         if let completion { entry.callbacks.append(completion) }
 
+        // Швидке прев'ю декодується паралельно з чітким, щоб не затримувати його
+        if let onQuick {
+            DispatchQueue.global(qos: .userInteractive).async {
+                if let quick = ImageLoader.decodeQuick(url: url, maxPixel: maxPixel) {
+                    DispatchQueue.main.async { onQuick(quick) }
+                }
+            }
+        }
         op.addExecutionBlock { [weak self] in
             let result = ImageLoader.decodePreview(url: url, maxPixel: maxPixel)
             DispatchQueue.main.async {
@@ -204,7 +225,10 @@ final class ImageLoader {
         let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
         let info = ImageInfo.make(url: url, source: source, props: props)
         let fullSide = Int(max(info.pixelSize.width, info.pixelSize.height))
-        let target = fullSide > 0 ? min(maxPixel, fullSide) : maxPixel
+        let isRawFile = UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) ?? false
+        // Для RAW розмір «рівно вдвічі» не прискорює (вбудоване прев'ю), тож лишаємо розмір екрана
+        let target = isRawFile ? (fullSide > 0 ? min(maxPixel, fullSide) : maxPixel)
+                               : previewTarget(fullSide: fullSide, maxPixel: maxPixel)
 
         var preview: CGImage?
         let isRaw = UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) ?? false
@@ -220,20 +244,53 @@ final class ImageLoader {
         }
         guard let preview else { return nil }
 
-        var size = info.pixelSize
-        if size.width <= 0 || size.height <= 0 {
-            size = CGSize(width: preview.width, height: preview.height)
-        } else {
-            let previewAspect = CGFloat(preview.width) / CGFloat(preview.height)
-            let fullAspect = size.width / size.height
-            if abs(previewAspect - fullAspect) / fullAspect > 0.01 {
-                size = CGSize(width: size.width, height: (size.width / previewAspect).rounded())
-            }
-        }
-
+        let size = displaySize(info: info, image: preview)
         let histogram = Histogram.compute(from: preview)
         let elapsed = CFAbsoluteTimeGetCurrent() - start
         return LoadedImage(url: url, preview: preview, displaySize: size, info: info, histogram: histogram, decodeTime: elapsed)
+    }
+
+    /// Розмір прев'ю. Якщо оригінал можна зменшити рівно вдвічі (вчетверо…) приблизно до розміру екрана —
+    /// беремо саме такий розмір: JPEG тоді декодується значно швидше (масштабування прямо під час декодування).
+    static func previewTarget(fullSide: Int, maxPixel: Int) -> Int {
+        guard fullSide > 0 else { return maxPixel }
+        guard fullSide > maxPixel else { return fullSide }
+        var side = fullSide
+        while (side + 1) / 2 >= Int(Double(maxPixel) * 0.97) { side = (side + 1) / 2 }
+        if side < fullSide, Double(side) <= Double(maxPixel) * 1.25 { return side }
+        return maxPixel
+    }
+
+    /// Розмір оригіналу для показу; якщо пропорції прев'ю трохи інші (вбудоване прев'ю RAW) — підганяємо.
+    private static func displaySize(info: ImageInfo, image: CGImage) -> CGSize {
+        let size = info.pixelSize
+        guard size.width > 0, size.height > 0 else { return CGSize(width: image.width, height: image.height) }
+        let previewAspect = CGFloat(image.width) / CGFloat(image.height)
+        let fullAspect = size.width / size.height
+        if abs(previewAspect - fullAspect) / fullAspect > 0.01 {
+            return CGSize(width: size.width, height: (size.width / previewAspect).rounded())
+        }
+        return size
+    }
+
+    /// Швидке прев'ю: ¼ оригіналу (для великих фото це ~30 мс навіть для CR3).
+    /// nil — якщо фото й так невелике і швидкий етап не потрібен.
+    static func decodeQuick(url: URL, maxPixel: Int) -> QuickPreview? {
+        let start = CFAbsoluteTimeGetCurrent()
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetCount(source) > 0 else { return nil }
+        let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+        let info = ImageInfo.make(url: url, source: source, props: props)
+        let fullSide = Int(max(info.pixelSize.width, info.pixelSize.height))
+        var quickSide = (fullSide + 3) / 4
+        if quickSide < 800 { quickSide = (fullSide + 1) / 2 }
+        // Якщо швидке прев'ю майже таке ж велике, як звичайне, — сенсу немає
+        guard fullSide > 0, Double(quickSide) < Double(previewTarget(fullSide: fullSide, maxPixel: maxPixel)) * 0.6 else { return nil }
+
+        let isRaw = UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) ?? false
+        guard let image = makeThumbnail(source, maxPixel: quickSide, fromImageAlways: !isRaw) else { return nil }
+        return QuickPreview(url: url, image: image, displaySize: displaySize(info: info, image: image), info: info,
+                            decodeTime: CFAbsoluteTimeGetCurrent() - start)
     }
 
     static func decodeFull(url: URL) -> CGImage? {
