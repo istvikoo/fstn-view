@@ -434,10 +434,9 @@ final class ImageLoader {
         let h = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0
         let side = max(w, h)
         guard side > 0 else { return nil }
-        // RAW: якщо вбудоване JPEG повнорозмірне — беремо його (у рази швидше за декодування RAW)
-        if UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) == true,
-           let embedded = makeThumbnail(source, maxPixel: side, fromImageAlways: false),
-           Double(max(embedded.width, embedded.height)) >= Double(side) * 0.9 {
+        // RAW: «оригінал» — це вбудований JPEG камери в найбільшому розмірі, який є у файлі
+        // (у Canon повнорозмірний, у Sony ARW лише 1616 px). Сам RAW проявляється тільки за клавішею A.
+        if ImageLoader.isRaw(url), let embedded = makeThumbnail(source, maxPixel: side, fromImageAlways: false) {
             return embedded
         }
         return makeThumbnail(source, maxPixel: side, fromImageAlways: true)
