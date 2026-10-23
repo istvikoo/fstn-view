@@ -16,6 +16,13 @@ enum Clipboard {
         return encodeJPEG(image)
     }
 
+    /// ⌘C: сам файл, як «Копіювати» у Finder.
+    static func write(file url: URL) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([url as NSURL])
+    }
+
     static func write(jpeg: Data) {
         let item = NSPasteboardItem()
         item.setData(jpeg, forType: NSPasteboard.PasteboardType(UTType.jpeg.identifier))

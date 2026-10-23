@@ -18,6 +18,7 @@ if args.count >= 3, args[1] == "--bench" {
 if args.count >= 3, args[1] == "--copy" {
     // "fstn view" --copy <файл> [повороти]: скопіювати фото в буфер так само, як ⌘C
     let url = URL(fileURLWithPath: args[2])
+    if args.count >= 4, args[3] == "file" { Clipboard.write(file: url); print("Файл скопійовано"); exit(0) }
     let rotation = args.count >= 4 ? Int(args[3]) ?? 0 : 0
     guard let jpeg = Clipboard.jpegData(for: url, developed: nil, rotation: rotation) else { print("Не вдалося"); exit(1) }
     Clipboard.write(jpeg: jpeg)

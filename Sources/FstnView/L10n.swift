@@ -78,7 +78,9 @@ private let english: [String: String] = [
 
     // Поворот, Finder, інша програма
     "Показати у Finder": "Show in Finder",
-    "Копіювати фото": "Copy Photo",
+    "Копіювати файл": "Copy File",
+    "Копіювати як картинку": "Copy as Image",
+    "Файл скопійовано": "File copied",
     "Копіювання…": "Copying…",
     "Скопійовано": "Copied",
     "Не вдалося скопіювати": "Couldn’t copy",

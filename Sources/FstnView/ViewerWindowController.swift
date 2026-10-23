@@ -598,7 +598,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// ⌘C: скопіювати поточне фото в буфер (як воно зараз на екрані — з поворотом і проявкою RAW).
+    /// ⌘C: скопіювати сам файл (як у Finder).
+    func copyFileToPasteboard() {
+        guard files.indices.contains(index) else { return }
+        Clipboard.write(file: files[index])
+        flash(L("Файл скопійовано"))
+    }
+
+    /// ⌥⌘C: скопіювати як картинку (як зараз на екрані — з поворотом і проявкою RAW).
     func copyToPasteboard() {
         guard files.indices.contains(index) else { return }
         let url = files[index]
