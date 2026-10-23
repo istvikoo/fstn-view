@@ -15,6 +15,15 @@ if args.count >= 3, args[1] == "--bench" {
     }
     exit(0)
 }
+if args.count >= 3, args[1] == "--copy" {
+    // "fstn view" --copy <файл> [повороти]: скопіювати фото в буфер так само, як ⌘C
+    let url = URL(fileURLWithPath: args[2])
+    let rotation = args.count >= 4 ? Int(args[3]) ?? 0 : 0
+    guard let jpeg = Clipboard.jpegData(for: url, developed: nil, rotation: rotation) else { print("Не вдалося"); exit(1) }
+    Clipboard.write(jpeg: jpeg)
+    print("Скопійовано \(jpeg.count) байт")
+    exit(0)
+}
 if args.count >= 3, args[1] == "--info" {
     let url = URL(fileURLWithPath: args[2])
     guard let image = ImageLoader.decodePreview(url: url, maxPixel: ImageLoader.shared.previewMaxPixel) else {

@@ -318,6 +318,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             parts.append("( \(details) )")
         }
         parts.append("[ \(index + 1) / \(files.count) ]")
+        if let flashText { parts.append("· \(flashText)") }
         let here = files[index]
         if embeddedShownFor == here {
             parts.append("[ JPEG ]")
@@ -579,6 +580,43 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             showCurrent()
         } else {
             open(first)
+        }
+    }
+
+    // MARK: - Буфер обміну
+
+    /// Коротке повідомлення в зеленому рядку («Скопійовано»).
+    private var flashText: String?
+
+    private func flash(_ text: String) {
+        flashText = text
+        updateOverlay()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self, self.flashText == text else { return }
+            self.flashText = nil
+            self.updateOverlay()
+        }
+    }
+
+    /// ⌘C: скопіювати поточне фото в буфер (як воно зараз на екрані — з поворотом і проявкою RAW).
+    func copyToPasteboard() {
+        guard files.indices.contains(index) else { return }
+        let url = files[index]
+        let rotation = rotations[url] ?? 0
+        let developed = rawShownFor == url ? loader.developedFull(url) : nil
+        flash(L("Копіювання…"))
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let jpeg = Clipboard.jpegData(for: url, developed: developed, rotation: rotation)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let jpeg {
+                    Clipboard.write(jpeg: jpeg)
+                    self.flash(L("Скопійовано"))
+                } else {
+                    NSSound.beep()
+                    self.flash(L("Не вдалося скопіювати"))
+                }
+            }
         }
     }
 

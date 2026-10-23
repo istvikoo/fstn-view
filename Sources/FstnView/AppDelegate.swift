@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func rotateLeft(_ sender: Any?) { viewer().rotate(by: -1) }
     @objc func rotateRight(_ sender: Any?) { viewer().rotate(by: 1) }
     @objc func showInFinder(_ sender: Any?) { viewer().showInFinder() }
+    @objc func copyImage(_ sender: Any?) { viewer().copyToPasteboard() }
     @objc func openInEditor(_ sender: Any?) { viewer().openInExternalEditor() }
     @objc func chooseEditor(_ sender: Any?) { viewer().chooseExternalEditor() }
     @objc func actualSize(_ sender: Any?) { viewer().toggleActualSize() }
@@ -143,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         _ = submenu(L("Правка")) { m in
             add(m, L("Відновити видалене фото"), #selector(undoDelete(_:)), "z")
+            add(m, L("Копіювати фото"), #selector(copyImage(_:)), "c")
             m.addItem(.separator())
             add(m, L("Перемістити в Кошик (Delete)"), #selector(deleteImage(_:)), "\u{8}")
         }

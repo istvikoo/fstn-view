@@ -16,6 +16,7 @@ almost instantly and shows an info panel with EXIF data and a histogram.
 - **Delete to Trash** with `Delete` / `Backspace`. The app asks for confirmation (with a *Don’t show again* option), and `⌘Z` restores the last deleted photo. RAW+JPEG pairs with the same name (`IMG_0001.CR3` + `IMG_0001.JPG`) are deleted and restored together.
 - **Rotate** with `L` / `R` (on screen only, files are not changed).
 - **Open in another app** (Lightroom, Photoshop, DxO…) with `E`; the app is chosen the first time. **Show in Finder** with `⌘R`.
+- **Copy to clipboard** with `⌘C` to paste into a messenger or document. JPEGs are copied byte for byte; RAW files are copied as the image on screen (embedded JPEG, or the developed RAW after `A`), including rotation.
 - **Full screen on launch.** `Esc` quits.
 - **English and Ukrainian UI.** Switch it in the *Language* menu without restarting.
 - **Built-in updates** from GitHub Releases.
@@ -53,6 +54,7 @@ Requires macOS 14 Sonoma or later.
 | Rotate left / right | `L` / `R` |
 | Open in another app | `E` |
 | Show in Finder | `⌘R` |
+| Copy photo to clipboard | `⌘C` |
 | Leave or enter full screen | `F` or `Enter` |
 | Quit | `Esc` |
 | Open file or folder | `⌘O` |
