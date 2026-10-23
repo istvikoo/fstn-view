@@ -18,9 +18,16 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private var stripBottom: NSLayoutConstraint!
     private var stripShown = false
 
+    /// Усі зображення папки. `files` — те, що гортаємо: без RAW, у яких є JPEG-пара.
+    private var allFiles: [URL] = [] {
+        didSet { regroup() }
+    }
     private var files: [URL] = [] {
         didSet { strip.setFiles(files, current: index) }
     }
+    /// JPEG → його RAW-пара (IMG_0001.JPG → IMG_0001.CR3). RAW схований зі списку, A проявляє саме його.
+    private var pairedRaw: [URL: URL] = [:]
+    private static let groupPairsKey = "groupRawJpegPairs"
     private var index = 0
     private var direction = 1
     private var current: LoadedImage?
@@ -59,7 +66,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
 
-        UserDefaults.standard.register(defaults: [Self.panelDefaultsKey: false])
+        UserDefaults.standard.register(defaults: [Self.panelDefaultsKey: false, Self.groupPairsKey: true])
         isPinned = UserDefaults.standard.bool(forKey: Self.panelDefaultsKey)
 
         // Панель: напівпрозорий фон + SwiftUI-вміст
@@ -141,7 +148,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
         // Файл показуємо одразу, не чекаючи, поки прочитається вміст папки.
         if !isFolder {
-            files = [url]
+            allFiles = [url]
             index = 0
             showCurrent()
         }
@@ -151,7 +158,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.listingToken == token else { return }
                 if isFolder {
-                    self.files = list
+                    self.allFiles = list
                     self.index = 0
                     if list.isEmpty {
                         self.clearInfo()
@@ -162,15 +169,85 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                     }
                 } else {
                     let path = url.standardizedFileURL.path
-                    if let i = list.firstIndex(where: { $0.standardizedFileURL.path == path }) {
-                        self.files = list
-                        self.index = i
+                    let same: (URL) -> Bool = { $0.standardizedFileURL.path == path }
+                    if list.contains(where: same) {
+                        self.allFiles = list
+                        if let i = self.files.firstIndex(where: same) {
+                            self.index = i
+                        } else if let jpg = self.pairedRaw.first(where: { same($0.value) })?.key,
+                                  let i = self.files.firstIndex(of: jpg) {
+                            // Відкрили RAW, у якого є JPEG-пара: показуємо пару як один кадр
+                            self.index = i
+                            self.showCurrent()
+                            return
+                        }
                     }
                     self.updatePosition()
                     self.preloadNeighbors()
                 }
             }
         }
+    }
+
+    // MARK: - Пари RAW+JPEG
+
+    var groupsPairs: Bool { UserDefaults.standard.bool(forKey: Self.groupPairsKey) }
+
+    /// Будує `files` з `allFiles`: RAW з JPEG-парою ховається, JPEG стає одним кадром.
+    private func regroup() {
+        guard groupsPairs else {
+            pairedRaw = [:]
+            files = allFiles
+            return
+        }
+        var groups: [String: [URL]] = [:]
+        for u in allFiles {
+            let key = u.deletingLastPathComponent().standardizedFileURL.path + "/"
+                + u.deletingPathExtension().lastPathComponent.lowercased()
+            groups[key, default: []].append(u)
+        }
+        var pairs: [URL: URL] = [:]
+        var hidden = Set<URL>()
+        for group in groups.values where group.count > 1 {
+            guard let raw = group.first(where: ImageLoader.isRaw),
+                  let jpg = group.first(where: { !ImageLoader.isRaw($0) }) else { continue }
+            pairs[jpg] = raw
+            hidden.insert(raw)
+        }
+        pairedRaw = pairs
+        files = hidden.isEmpty ? allFiles : allFiles.filter { !hidden.contains($0) }
+    }
+
+    /// Меню «Вигляд»: обʼєднувати пари RAW+JPEG чи показувати всі файли окремо.
+    func toggleGroupPairs() {
+        let here = files.indices.contains(index) ? files[index] : nil
+        UserDefaults.standard.set(!groupsPairs, forKey: Self.groupPairsKey)
+        regroup()
+        guard let here else { return }
+        if let i = files.firstIndex(of: here) {
+            index = i
+            updatePosition()
+        } else {
+            let jpg = pairedRaw.first(where: { $0.value == here })?.key
+            index = jpg.flatMap { files.firstIndex(of: $0) } ?? 0
+            showCurrent()
+        }
+    }
+
+    /// Файл, який зараз на екрані: RAW-пара після A, інакше сам кадр. Для E, ⌘C, ⌘R.
+    private var displayedFile: URL? {
+        guard files.indices.contains(index) else { return nil }
+        let url = files[index]
+        if rawShownFor == url, let raw = pairedRaw[url] { return raw }
+        return url
+    }
+
+    /// Інфо-панель: у пари показуємо другий файл (RAW біля JPEG, або JPEG біля проявленого RAW).
+    private func infoWithPair(_ info: ImageInfo, for url: URL) -> ImageInfo {
+        guard let raw = pairedRaw[url] else { return info }
+        var info = info
+        info.pair = info.url == raw ? url : raw
+        return info
     }
 
     // MARK: - Перегляд
@@ -219,7 +296,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         canvas.setRotation(rotations[quick.url] ?? 0)
         canvas.setImage(quick.image, size: quick.displaySize, resetView: true)
         state.fileName = quick.url.lastPathComponent
-        state.info = quick.info
+        state.info = infoWithPair(quick.info, for: quick.url)
         state.histogram = nil
         updateOverlay()
     }
@@ -249,8 +326,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             fullPrefetch = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
         }
-        state.fileName = image.url.lastPathComponent
-        state.info = image.info
+        state.fileName = image.info.url.lastPathComponent
+        state.info = infoWithPair(image.info, for: image.url)
         state.histogram = image.histogram
         let ms = Int((image.decodeTime * 1000).rounded())
         hintMaker = nil
@@ -309,8 +386,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             canvas.setOverlayText("")
             return
         }
-        var parts = [files[index].lastPathComponent]
-        if let info = state.info, info.url == files[index] {
+        let here = files[index]
+        let pair = pairedRaw[here]
+        var parts = [(rawShownFor == here ? pair : nil)?.lastPathComponent ?? here.lastPathComponent]
+        if let info = state.info, info.url == here || info.url == pair {
             let w = Int(info.pixelSize.width), h = Int(info.pixelSize.height)
             var details = "\(w) x \(h) = \(String(format: "%.2f", Double(w * h) / 1_000_000)) MP"
             if let bytes = info.fileSize {
@@ -320,13 +399,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         }
         parts.append("[ \(index + 1) / \(files.count) ]")
         if let flashText { parts.append("· \(flashText)") }
-        let here = files[index]
         if embeddedShownFor == here {
             parts.append("[ JPEG ]")
         } else if rawShownFor == here || (current?.url == here && current?.isDevelopedRAW == true) {
             parts.append("[ RAW ]")
         } else if rawDeveloping == here {
             parts.append("[ RAW… ]")
+        } else if pair != nil {
+            parts.append("[ JPEG+RAW ]")
         }
         if canvas.hasImage {
             parts.append("\(Int((canvas.zoom * 100).rounded()))%")
@@ -378,7 +458,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let have = CGFloat(max(cur.preview.width, cur.preview.height))
         if needed > have * 1.02 {
             guard !showingFull, embeddedShownFor != cur.url else { return }
-            if rawShownFor == cur.url, let full = loader.developedFull(cur.url) {
+            if rawShownFor == cur.url, let full = loader.developedFull(pairedRaw[cur.url] ?? cur.url) {
                 canvas.replaceImage(full)
                 showingFull = true
                 return
@@ -410,15 +490,16 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Проявка RAW (клавіша A)
 
-    /// A: проявити поточне RAW-фото (лише його). Повторне A — назад до вбудованого JPEG.
+    /// A: проявити поточне RAW-фото (лише його) або RAW-пару поточного JPEG. Повторне A — назад.
     func toggleRawDevelop() {
         guard files.indices.contains(index) else { return }
         let url = files[index]
-        guard ImageLoader.isRaw(url) else { NSSound.beep(); return }
+        let pair = pairedRaw[url]
+        guard ImageLoader.isRaw(url) || pair != nil else { NSSound.beep(); return }
 
         // Файли, де вбудований JPEG замалий (Sony ARW): за замовчуванням проявлений RAW,
         // A перемикає на JPEG камери і назад.
-        if embeddedShownFor == url || (current?.url == url && current?.isDevelopedRAW == true) {
+        if pair == nil, embeddedShownFor == url || (current?.url == url && current?.isDevelopedRAW == true) {
             if embeddedShownFor == url {
                 embeddedShownFor = nil
                 if let developed = loader.cached(url) { display(developed, fromCache: true) } else { showCurrent() }
@@ -445,12 +526,13 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         rawDeveloping = url
         updateOverlay()
         setDecodeText { L("Проявка RAW…") }
-        loader.loadDeveloped(url, priority: .veryHigh) { [weak self] image in
+        loader.loadDeveloped(pair ?? url, priority: .veryHigh) { [weak self] image in
             guard let self, self.files.indices.contains(self.index), self.files[self.index] == url,
                   self.rawDeveloping == url else { return }
             self.rawDeveloping = nil
             if let image {
-                self.display(image, fromCache: false, developed: true)
+                // Проявлений RAW пари показуємо як той самий кадр (JPEG), щоб зум і поворот лишились
+                self.display(pair == nil ? image : image.shown(as: url), fromCache: false, developed: true)
             } else {
                 self.setDecodeText { L("Не вдалося проявити RAW") }
                 self.updateOverlay()
@@ -503,7 +585,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private func companions(of url: URL) -> [URL] {
         let base = url.deletingPathExtension().lastPathComponent.lowercased()
         let folder = url.deletingLastPathComponent().standardizedFileURL.path
-        return files.filter { other in
+        return allFiles.filter { other in
             other != url
                 && other.deletingPathExtension().lastPathComponent.lowercased() == base
                 && other.deletingLastPathComponent().standardizedFileURL.path == folder
@@ -530,7 +612,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 }
                 let currentURL = self.files.indices.contains(self.index) ? self.files[self.index] : nil
                 let before = self.files.prefix(self.index).filter { removed.contains($0) }.count
-                self.files.removeAll { removed.contains($0) }
+                self.allFiles.removeAll { removed.contains($0) }
                 if self.files.isEmpty {
                     self.current = nil
                     self.index = 0
@@ -572,12 +654,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let folder = first.deletingLastPathComponent().standardizedFileURL.path
         let currentFolder = files.first?.deletingLastPathComponent().standardizedFileURL.path
         if currentFolder == nil || currentFolder == folder {
+            var list = allFiles
             for u in restored {
                 let name = u.lastPathComponent
-                let pos = files.firstIndex { $0.lastPathComponent.localizedStandardCompare(name) == .orderedDescending } ?? files.count
-                files.insert(u, at: pos)
+                let pos = list.firstIndex { $0.lastPathComponent.localizedStandardCompare(name) == .orderedDescending } ?? list.count
+                list.insert(u, at: pos)
             }
-            index = files.firstIndex(of: first) ?? 0
+            allFiles = list
+            let shown = restored.first { files.contains($0) } ?? first
+            index = files.firstIndex(of: shown) ?? 0
             showCurrent()
         } else {
             open(first)
@@ -607,7 +692,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         menu.addItem(.separator())
         item(L("Повернути ліворуч (L)")) { [weak self] in self?.rotate(by: -1) }
         item(L("Повернути праворуч (R)")) { [weak self] in self?.rotate(by: 1) }
-        item(L("Проявити RAW / вбудований JPEG (A)"), enabled: ImageLoader.isRaw(url)) { [weak self] in self?.toggleRawDevelop() }
+        item(L("Проявити RAW / вбудований JPEG (A)"), enabled: ImageLoader.isRaw(url) || pairedRaw[url] != nil) { [weak self] in self?.toggleRawDevelop() }
         item(canvas.isFit ? L("Реальний розмір 100% (Z)") : L("Вписати у вікно (0)")) { [weak self] in self?.toggleActualSize() }
         menu.addItem(.separator())
         item(L("Перемістити в Кошик (Delete)")) { [weak self] in self?.deleteCurrent() }
@@ -636,8 +721,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     /// ⌘C: скопіювати сам файл (як у Finder).
     func copyFileToPasteboard() {
-        guard files.indices.contains(index) else { return }
-        Clipboard.write(file: files[index])
+        guard let file = displayedFile else { return }
+        Clipboard.write(file: file)
         flash(L("Файл скопійовано"))
     }
 
@@ -646,7 +731,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         guard files.indices.contains(index) else { return }
         let url = files[index]
         let rotation = rotations[url] ?? 0
-        let developed = rawShownFor == url ? loader.developedFull(url) : nil
+        let developed = rawShownFor == url ? loader.developedFull(pairedRaw[url] ?? url) : nil
         flash(L("Копіювання…"))
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let jpeg = Clipboard.jpegData(for: url, developed: developed, rotation: rotation)
@@ -676,8 +761,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     /// ⌘R: показати поточний файл у Finder.
     func showInFinder() {
-        guard files.indices.contains(index) else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([files[index]])
+        guard let file = displayedFile else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([file])
     }
 
     private static let editorKey = "externalEditorPath"
@@ -689,8 +774,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     /// E: відкрити поточне фото в обраній програмі (Lightroom, Photoshop, DxO…). Перший раз — спитати яку.
     func openInExternalEditor() {
-        guard files.indices.contains(index) else { return }
-        let url = files[index]
+        guard let url = displayedFile else { return }
         if let path = UserDefaults.standard.string(forKey: Self.editorKey), FileManager.default.fileExists(atPath: path) {
             if window?.styleMask.contains(.fullScreen) == true { window?.toggleFullScreen(nil) }
             NSWorkspace.shared.open([url], withApplicationAt: URL(fileURLWithPath: path),

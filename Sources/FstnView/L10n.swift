@@ -53,6 +53,8 @@ private let english: [String: String] = [
     "Перемістити в Кошик (Delete)": "Move to Trash (Delete)",
     "Вигляд": "View",
     "Закріпити інформаційну панель (I)": "Pin Info Panel (I)",
+    "Обʼєднувати пари RAW+JPEG": "Group RAW+JPEG Pairs",
+    "Пара": "Pair",
     "Вписати у вікно (0)": "Fit to Window (0)",
     "Реальний розмір 100% (Z)": "Actual Size 100% (Z)",
     "Збільшити (+)": "Zoom In (+)",

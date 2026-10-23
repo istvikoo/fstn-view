@@ -25,6 +25,8 @@ struct ImageInfo {
     private let typeName: String?
     private let frames: Int
     private let props: [CFString: Any]
+    /// Другий файл пари RAW+JPEG, якщо він є.
+    var pair: URL? = nil
 
     static func make(url: URL, source: CGImageSource, props: [CFString: Any]) -> ImageInfo {
         var w = intValue(props[kCGImagePropertyPixelWidth]) ?? 0
@@ -61,6 +63,10 @@ struct ImageInfo {
             ("Ім'я", url.lastPathComponent),
             ("Папка", (url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath),
             ("Розмір", fileSize.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }),
+            ("Пара", pair.map { pair in
+                let size = (try? pair.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+                return pair.lastPathComponent + (size.map { " · " + ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? "")
+            }),
             ("Змінено", modified.map { Self.dateOut.string(from: $0) }),
             ("Створено", created.map { Self.dateOut.string(from: $0) }),
         ])

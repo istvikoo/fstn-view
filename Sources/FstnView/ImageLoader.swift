@@ -27,6 +27,12 @@ final class LoadedImage {
     }
 
     var cost: Int { preview.bytesPerRow * preview.height }
+
+    /// Те саме зображення під іншим кадром (проявлений RAW пари показується як її JPEG).
+    func shown(as url: URL) -> LoadedImage {
+        LoadedImage(url: url, preview: preview, displaySize: displaySize, info: info,
+                    histogram: histogram, decodeTime: decodeTime)
+    }
 }
 
 /// Перший, швидкий етап показу: менша роздільність, поки декодується чітке прев'ю.

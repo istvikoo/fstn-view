@@ -13,6 +13,7 @@ almost instantly and shows an info panel with EXIF data and a histogram.
 - **Info line** in the top-left corner: file name, dimensions, megapixels, file size, position in folder and zoom (like FastStone).
 - **Zoom.** Click to toggle 100% at the clicked point. Press and hold to zoom only while the button is down, and drag to look around.
 - **Develop RAW on demand.** RAW files are shown from their embedded JPEG for speed. Press `A` to develop the current RAW file with the macOS RAW engine (about 0.5 s); 100% zoom then shows the developed image too. Press `A` again to go back. Some cameras (for example Sony ARW) embed only a small preview, so it looks softer full screen until you press `A`.
+- **RAW+JPEG pairs as one photo.** When a folder has `IMG_0001.JPG` and `IMG_0001.CR3`, only the JPEG is shown and the counter counts photos, not files; the line says `[ JPEG+RAW ]`. Press `A` to develop the paired RAW, and `A` again to go back to the JPEG. `E`, `⌘C` and `⌘R` use the file on screen. Turn it off with *View → Group RAW+JPEG Pairs*.
 - **Delete to Trash** with `Delete` / `Backspace`. The app asks for confirmation (with a *Don’t show again* option), and `⌘Z` restores the last deleted photo. RAW+JPEG pairs with the same name (`IMG_0001.CR3` + `IMG_0001.JPG`) are deleted and restored together.
 - **Rotate** with `L` / `R` (on screen only, files are not changed).
 - **Open in another app** (Lightroom, Photoshop, DxO…) with `E`; the app is chosen the first time. **Show in Finder** with `⌘R`.
@@ -49,7 +50,7 @@ Requires macOS 14 Sonoma or later.
 | Show info panel | Move the mouse to the right edge |
 | Pin / unpin info panel | `I` or `Tab` |
 | Show / hide info line | `T` |
-| Develop current RAW / back to embedded JPEG | `A` |
+| Develop current RAW (or the RAW of a JPEG pair) / back | `A` |
 | Move to Trash / restore | `Delete` or `Backspace` / `⌘Z` |
 | Rotate left / right | `L` / `R` |
 | Open in another app | `E` |
