@@ -119,6 +119,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         canvas.onZoomChanged = { [weak self] in self?.zoomChanged() }
         canvas.onKeyDown = { [weak self] event in self?.handleKey(event) ?? false }
         canvas.onDropURL = { [weak self] url in self?.open(url) }
+        canvas.onContextMenu = { [weak self] in self?.contextMenu() }
         showHint { L("Відкрийте зображення (⌘O) або перетягніть його сюди") }
         window.makeFirstResponder(canvas)
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: AppLanguage.changed, object: nil)
@@ -581,6 +582,41 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         } else {
             open(first)
         }
+    }
+
+    // MARK: - Меню на правий клік
+
+    private func contextMenu() -> NSMenu? {
+        guard files.indices.contains(index) else { return nil }
+        let url = files[index]
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        func item(_ title: String, _ key: String = "", _ mods: NSEvent.ModifierFlags = [],
+                  enabled: Bool = true, _ action: @escaping () -> Void) {
+            let i = ClosureMenuItem(title: title, keyEquivalent: key, action: action)
+            i.keyEquivalentModifierMask = mods
+            i.isEnabled = enabled
+            menu.addItem(i)
+        }
+        let editorTitle = externalEditorName.map { L("Відкрити в %@ (E)", $0) } ?? L("Відкрити в іншій програмі (E)")
+        item(editorTitle) { [weak self] in self?.openInExternalEditor() }
+        item(L("Показати у Finder"), "r", .command) { [weak self] in self?.showInFinder() }
+        menu.addItem(.separator())
+        item(L("Копіювати файл"), "c", .command) { [weak self] in self?.copyFileToPasteboard() }
+        item(L("Копіювати як картинку"), "c", [.command, .option]) { [weak self] in self?.copyToPasteboard() }
+        menu.addItem(.separator())
+        item(L("Повернути ліворуч (L)")) { [weak self] in self?.rotate(by: -1) }
+        item(L("Повернути праворуч (R)")) { [weak self] in self?.rotate(by: 1) }
+        item(L("Проявити RAW / вбудований JPEG (A)"), enabled: ImageLoader.isRaw(url)) { [weak self] in self?.toggleRawDevelop() }
+        item(canvas.isFit ? L("Реальний розмір 100% (Z)") : L("Вписати у вікно (0)")) { [weak self] in self?.toggleActualSize() }
+        menu.addItem(.separator())
+        item(L("Перемістити в Кошик (Delete)")) { [weak self] in self?.deleteCurrent() }
+        item(L("Відновити видалене фото"), "z", .command, enabled: canUndoDelete) { [weak self] in self?.undoDelete() }
+        menu.addItem(.separator())
+        item(L("Закріпити інформаційну панель (I)")) { [weak self] in self?.togglePanel() }
+        menu.items.last?.state = isPinned ? .on : .off
+        item(L("Повний екран (F / Enter)")) { [weak self] in self?.toggleFullScreen() }
+        return menu
     }
 
     // MARK: - Буфер обміну

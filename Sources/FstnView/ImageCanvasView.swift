@@ -7,6 +7,8 @@ final class ImageCanvasView: NSView {
     var onZoomChanged: (() -> Void)?
     var onKeyDown: ((NSEvent) -> Bool)?
     var onDropURL: ((URL) -> Void)?
+    /// Меню на правий клік по фото.
+    var onContextMenu: (() -> NSMenu?)?
 
     private let imageLayer = CALayer()
     private let hint = NSTextField(labelWithString: "")
@@ -322,6 +324,10 @@ final class ImageCanvasView: NSView {
 
     override func magnify(with event: NSEvent) {
         setZoom(zoom * (1 + event.magnification), anchor: convert(event.locationInWindow, from: nil))
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        onContextMenu?()
     }
 
     override func keyDown(with event: NSEvent) {

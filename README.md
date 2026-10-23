@@ -58,6 +58,7 @@ Requires macOS 14 Sonoma or later.
 | Leave or enter full screen | `F` or `Enter` |
 | Quit | `Esc` |
 | Open file or folder | `⌘O` |
+| All actions in one menu | Right-click the photo |
 
 ## Updates
 
