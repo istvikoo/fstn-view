@@ -39,7 +39,7 @@ almost instantly and shows an info panel with EXIF data and a histogram.
 On first launch the app offers to become the default app for photos. You choose regular photos (JPEG, HEIC, PNG…), RAW files (CR3, NEF, ARW, DNG…) or both.
 You can change this later with **fstn view → Make Default for Photos…**.
 
-Requires macOS 14 Sonoma or later.
+Requires macOS 14 Sonoma or later. Runs natively on both Apple Silicon and Intel Macs (universal app).
 
 ## Keyboard and mouse
 

@@ -3,14 +3,27 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-swift build -c release
-BIN="$(swift build -c release --show-bin-path)/FstnView"
+# Universal: окремо для Apple Silicon і Intel, потім один файл з обома (macOS сама вибирає потрібну частину)
+# (Нові версії Swift кладуть обидві збірки в одну папку — тож кожну одразу копіюємо окремо.)
+mkdir -p build
+BINS=()
+for ARCH in arm64 x86_64; do
+  swift build -c release --triple "$ARCH-apple-macosx14.0"
+  OUT="build/FstnView-$ARCH"
+  cp "$(swift build -c release --triple "$ARCH-apple-macosx14.0" --show-bin-path)/FstnView" "$OUT"
+  [ "$(lipo -archs "$OUT")" = "$ARCH" ] || { echo "Збірка $ARCH дала $(lipo -archs "$OUT")" >&2; exit 1; }
+  BINS+=("$OUT")
+done
+BIN="build/FstnView-universal"
+lipo -create "${BINS[@]}" -output "$BIN"
+rm -f "${BINS[@]}"
 APP="build/fstn view.app"
 VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Resources/Info.plist)
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/FstnView"
+rm -f "$BIN"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
 # App icon: Resources/AppIcon.png (1024×1024) -> AppIcon.icns
