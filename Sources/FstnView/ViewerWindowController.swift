@@ -46,6 +46,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     /// Поворот кожного фото на екрані (L / R), поки програма відкрита.
     private var rotations: [URL: Int] = [:]
     private var listingToken = UUID()
+    /// Оцінки й мітки кадрів (прочитані з XMP), щоб не читати файл щоразу.
+    private var marks: [URL: PhotoMark] = [:]
+    private let markQueue = DispatchQueue(label: "fstn.marks", qos: .userInitiated)
     /// Зум, з яким показати наступне фото (гортання в збільшеному вигляді).
     private var pendingView: ImageCanvasView.ViewState?
     private let loader = ImageLoader.shared
@@ -407,6 +410,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             parts.append("( \(details) )")
         }
         parts.append("[ \(index + 1) / \(files.count) ]")
+        let mark = marks[here]
+        if let mark, mark.rating > 0 { parts.append(mark.stars) }
         if let flashText { parts.append("· \(flashText)") }
         if embeddedShownFor == here {
             parts.append("[ JPEG ]")
@@ -420,7 +425,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         if canvas.hasImage {
             parts.append("\(Int((canvas.zoom * 100).rounded()))%")
         }
-        canvas.setOverlayText(parts.joined(separator: "  "))
+        canvas.setOverlayText(parts.joined(separator: "  "), dot: mark?.label?.color)
+        if mark == nil { loadMark(for: here) }
     }
 
     private func preloadNeighbors() {
@@ -505,6 +511,60 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let next = index + direction
         guard files.indices.contains(next) else { return }
         loader.loadFull(files[next], completion: nil)
+    }
+
+    // MARK: - Оцінки і мітки (1–5, 6–9)
+
+    /// Файли кадру, яким ставиться оцінка: фото і його RAW/JPEG-пара.
+    private func markTargets(_ url: URL) -> [URL] { [url] + companions(of: url) }
+
+    private func loadMark(for url: URL) {
+        let source = pairedRaw[url] ?? companions(of: url).first(where: ImageLoader.isRaw) ?? url
+        markQueue.async { [weak self] in
+            let mark = Ratings.read(source)
+            DispatchQueue.main.async {
+                guard let self, self.marks[url] == nil else { return }
+                self.marks[url] = mark
+                if self.files.indices.contains(self.index), self.files[self.index] == url { self.updateOverlay() }
+            }
+        }
+    }
+
+    /// 1–5: поставити зірки. Повторне натискання тієї ж цифри — прибрати оцінку.
+    func setRating(_ rating: Int) {
+        guard files.indices.contains(index) else { return }
+        let url = files[index]
+        var mark = marks[url] ?? Ratings.read(pairedRaw[url] ?? url)
+        mark.rating = mark.rating == rating ? 0 : rating
+        applyMark(mark, to: url)
+    }
+
+    /// 6–9: кольорова мітка. Повторне натискання — прибрати.
+    func setLabel(_ label: ColorLabel?) {
+        guard files.indices.contains(index) else { return }
+        let url = files[index]
+        var mark = marks[url] ?? Ratings.read(pairedRaw[url] ?? url)
+        mark.label = mark.label == label ? nil : label
+        applyMark(mark, to: url)
+    }
+
+    private func applyMark(_ mark: PhotoMark, to url: URL) {
+        let old = marks[url]
+        let targets = markTargets(url)
+        for u in targets { marks[u] = mark }
+        updateOverlay()
+        markQueue.async { [weak self] in
+            do {
+                try Ratings.write(mark, to: targets)
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    for u in targets { self.marks[u] = old }
+                    self.updateOverlay()
+                    self.showError(L("Не вдалося зберегти оцінку"), error)
+                }
+            }
+        }
     }
 
     // MARK: - Проявка RAW (клавіша A)
@@ -614,7 +674,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     /// Переміщує фото (разом із парою RAW+JPEG) в Кошик і показує наступне.
     private func moveToTrash(_ url: URL) {
-        let group = [url] + companions(of: url)
+        let photos = [url] + companions(of: url)
+        // Файл-супутник з оцінкою (IMG_0001.xmp) — разом із фото
+        let sidecars = Set(photos.map(Ratings.sidecar(for:))).filter { FileManager.default.fileExists(atPath: $0.path) }
+        let group = photos + sidecars.sorted { $0.path < $1.path }
         NSWorkspace.shared.recycle(group) { [weak self] trashed, error in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -674,7 +737,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let currentFolder = files.first?.deletingLastPathComponent().standardizedFileURL.path
         if currentFolder == nil || currentFolder == folder {
             var list = allFiles
-            for u in restored {
+            for u in restored where u.pathExtension.lowercased() != "xmp" {
                 let name = u.lastPathComponent
                 let pos = list.firstIndex { $0.lastPathComponent.localizedStandardCompare(name) == .orderedDescending } ?? list.count
                 list.insert(u, at: pos)
@@ -708,6 +771,28 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         menu.addItem(.separator())
         item(L("Копіювати файл"), "c", .command) { [weak self] in self?.copyFileToPasteboard() }
         item(L("Копіювати як картинку"), "c", [.command, .option]) { [weak self] in self?.copyToPasteboard() }
+        menu.addItem(.separator())
+        let rateItem = NSMenuItem(title: L("Оцінка і мітка"), action: nil, keyEquivalent: "")
+        let rateMenu = NSMenu()
+        rateMenu.autoenablesItems = false
+        let mark = marks[url] ?? PhotoMark()
+        for r in 1...5 {
+            let i = ClosureMenuItem(title: String(repeating: "★", count: r) + "  (\(r))", keyEquivalent: "") { [weak self] in self?.setRating(r) }
+            i.state = mark.rating == r ? .on : .off
+            rateMenu.addItem(i)
+        }
+        rateMenu.addItem(.separator())
+        for (n, label) in ColorLabel.allCases.enumerated() {
+            let i = ClosureMenuItem(title: "\(label.title)  (\(n + 6))", keyEquivalent: "") { [weak self] in self?.setLabel(label) }
+            i.state = mark.label == label ? .on : .off
+            let dot = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { r in
+                label.color.setFill(); NSBezierPath(ovalIn: r.insetBy(dx: 1, dy: 1)).fill(); return true
+            }
+            i.image = dot
+            rateMenu.addItem(i)
+        }
+        rateItem.submenu = rateMenu
+        menu.addItem(rateItem)
         menu.addItem(.separator())
         item(L("Повернути ліворуч (L)")) { [weak self] in self?.rotate(by: -1) }
         item(L("Повернути праворуч (R)")) { [weak self] in self?.rotate(by: 1) }
@@ -947,7 +1032,16 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         case 37: rotate(by: -1)                         // L — повернути проти годинникової
         case 15: rotate(by: 1)                          // R — повернути за годинниковою
         case 14: openInExternalEditor()                 // E — відкрити в іншій програмі
-        case 6, 18: toggleActualSize()                  // Z, 1
+        case 6: toggleActualSize()                      // Z
+        case 18, 83: setRating(1)                       // 1–5 — зірки (і на цифровому блоці)
+        case 19, 84: setRating(2)
+        case 20, 85: setRating(3)
+        case 21, 86: setRating(4)
+        case 23, 87: setRating(5)
+        case 22, 88: setLabel(.red)                     // 6–9 — кольорові мітки, як у Lightroom
+        case 26, 89: setLabel(.yellow)
+        case 28, 91: setLabel(.green)
+        case 25, 92: setLabel(.blue)
         case 29: fit()                                  // 0
         case 24, 69: zoomIn()                           // = / +
         case 27, 78: zoomOut()                          // - (і на цифровому блоці)

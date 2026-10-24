@@ -25,6 +25,17 @@ if args.count >= 3, args[1] == "--copy" {
     print("Скопійовано \(jpeg.count) байт")
     exit(0)
 }
+if args.count >= 3, args[1] == "--rate" {
+    // "fstn view" --rate <файл> [0-5] [Red|Yellow|Green|Blue|-]: прочитати або записати оцінку
+    let url = URL(fileURLWithPath: args[2])
+    if args.count >= 4, let rating = Int(args[3]) {
+        let label = args.count >= 5 ? ColorLabel(rawValue: args[4]) : nil
+        do { try Ratings.write(PhotoMark(rating: rating, label: label), to: [url]) } catch { print(error.localizedDescription); exit(1) }
+    }
+    let mark = Ratings.read(url)
+    print("\(url.lastPathComponent): оцінка \(mark.rating), мітка \(mark.label?.rawValue ?? "немає")")
+    exit(0)
+}
 if args.count >= 3, args[1] == "--info" {
     let url = URL(fileURLWithPath: args[2])
     guard let image = ImageLoader.decodePreview(url: url, maxPixel: ImageLoader.shared.previewMaxPixel) else {

@@ -96,8 +96,14 @@ final class ImageCanvasView: NSView {
         registerForDraggedTypes([.fileURL])
     }
 
-    func setOverlayText(_ text: String) {
-        overlay.stringValue = text
+    /// `dot` — кольоровий кружечок мітки в кінці рядка.
+    func setOverlayText(_ text: String, dot: NSColor? = nil) {
+        let attrs: [NSAttributedString.Key: Any] = [.font: overlay.font as Any, .foregroundColor: overlay.textColor as Any]
+        let line = NSMutableAttributedString(string: text, attributes: attrs)
+        if let dot, !text.isEmpty {
+            line.append(NSAttributedString(string: "  ●", attributes: [.font: overlay.font as Any, .foregroundColor: dot]))
+        }
+        overlay.attributedStringValue = line
         overlay.isHidden = text.isEmpty || !isOverlayEnabled
     }
 
