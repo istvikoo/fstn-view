@@ -9,6 +9,7 @@ almost instantly and shows an info panel with EXIF data and a histogram.
 - **Fast opening.** A lower-resolution preview appears in about 35 ms and is replaced by the sharp image a moment later. Images are decoded straight to screen size, and for RAW files the embedded full-size JPEG preview is used.
 - **Instant browsing.** Neighbouring images are preloaded, so the arrow keys switch photos without delay.
 - **Info panel** (EXIF, camera, lens, exposure, GPS, RGB histogram). It slides in when you move the mouse to the right edge, and you can pin it with `I`.
+- **Folder panel.** It slides in when you move the mouse to the left edge; pin it with `P`. *Favorites* lists Pictures, Desktop, Downloads, memory cards and local disks, plus folders you add (right-click a folder → *Add to Favorites*). Below is the tree of the current folder with the number of photos in each; click a folder to open it.
 - **Thumbnail strip.** It slides up when you move the mouse to the bottom edge; click a thumbnail to open that photo.
 - **Info line** in the top-left corner: file name, dimensions, megapixels, file size, position in folder and zoom (like FastStone).
 - **Zoom.** Click to toggle 100% at the clicked point. Press and hold to zoom only while the button is down, and drag to look around.
@@ -52,6 +53,8 @@ Requires macOS 14 Sonoma or later.
 | Fit to window | `0` |
 | Show thumbnail strip | Move the mouse to the bottom edge |
 | Show info panel | Move the mouse to the right edge |
+| Show folder panel | Move the mouse to the left edge |
+| Pin / unpin folder panel | `P` |
 | Pin / unpin info panel | `I` or `Tab` |
 | Show / hide info line | `T` |
 | Star rating / clear | `1`–`5` (same key again) |

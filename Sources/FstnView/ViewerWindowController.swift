@@ -19,6 +19,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     /// Тимчасово показана, бо миша біля правого краю.
     private var autoShown = false
 
+    /// Панель папок ліворуч: виїжджає біля лівого краю, P — закріпити.
+    private let folderPanel = FolderPanelView()
+    private var folderLeading: NSLayoutConstraint!
+    private var stageToLeftEdge: NSLayoutConstraint!
+    private var stageToFolders: NSLayoutConstraint!
+    private var foldersPinned = false
+    private var foldersAutoShown = false
+    private static let foldersDefaultsKey = "folderPanelPinned"
+
     /// Смуга мініатюр знизу: виїжджає, коли миша біля нижнього краю.
     private let strip = ThumbnailStripView()
     private var stripBottom: NSLayoutConstraint!
@@ -79,6 +88,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
         UserDefaults.standard.register(defaults: [Self.panelDefaultsKey: false, Self.groupPairsKey: true])
         isPinned = UserDefaults.standard.bool(forKey: Self.panelDefaultsKey)
+        foldersPinned = UserDefaults.standard.bool(forKey: Self.foldersDefaultsKey)
 
         // Панель: напівпрозорий фон + SwiftUI-вміст
         let host = NSHostingView(rootView: InfoPanelView(state: state))
@@ -100,7 +110,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         // Фото на всю ширину, панель — шаром поверх нього біля правого краю
         let container = HoverTrackingView()
         container.clipsToBounds = true
-        for v in [stage, strip, blur] as [NSView] {
+        for v in [stage, strip, blur, folderPanel] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(v)
         }
@@ -108,15 +118,21 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         canvasToEdge = stage.trailingAnchor.constraint(equalTo: container.trailingAnchor)
         canvasToPanel = stage.trailingAnchor.constraint(equalTo: blur.leadingAnchor)
         stripBottom = strip.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: ThumbnailStripView.height)
+        folderLeading = folderPanel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: -FolderPanelView.width)
+        stageToLeftEdge = stage.leadingAnchor.constraint(equalTo: container.leadingAnchor)
+        stageToFolders = stage.leadingAnchor.constraint(equalTo: folderPanel.trailingAnchor)
         NSLayoutConstraint.activate([
-            stage.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            folderLeading,
+            folderPanel.topAnchor.constraint(equalTo: container.topAnchor),
+            folderPanel.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            folderPanel.widthAnchor.constraint(equalToConstant: FolderPanelView.width),
             stage.topAnchor.constraint(equalTo: container.topAnchor),
             stage.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             blur.topAnchor.constraint(equalTo: container.topAnchor),
             blur.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             blur.widthAnchor.constraint(equalToConstant: Self.panelSize),
             panelTrailing,
-            strip.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            strip.leadingAnchor.constraint(equalTo: stage.leadingAnchor),
             strip.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
             strip.heightAnchor.constraint(equalToConstant: ThumbnailStripView.height),
             stripBottom,
@@ -125,11 +141,18 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         strip.onCompare = { [weak self] i in self?.compare(with: i) }
         window.contentView = container
         container.onMouseMoved = { [weak self] point in self?.mouseMoved(to: point) }
+        folderPanel.onOpen = { [weak self] url in
+            guard let self else { return }
+            self.open(url)
+            self.window?.makeFirstResponder(self.canvas)
+        }
         container.onMouseExited = { [weak self] in
+            self?.setFoldersAutoShown(false)
             self?.setAutoShown(false)
             self?.setStripShown(false)
         }
         applyPanelState(animated: false)
+        applyFolderPanelState(animated: false)
 
         window.setFrameAutosaveName("FstnViewMain")
         if !window.setFrameUsingName("FstnViewMain") { window.center() }
@@ -169,6 +192,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
         let isFolder = isDir.boolValue
         let folder = isFolder ? url : url.deletingLastPathComponent()
+        if comparing { exitCompare() }
+        folderPanel.setCurrentFolder(folder)
         let token = UUID()
         listingToken = token
 
@@ -187,6 +212,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                     self.allFiles = list
                     self.index = 0
                     if list.isEmpty {
+                        self.current = nil
+                        self.updatePosition()
                         self.clearInfo()
                         self.showHint { L("У папці «%@» немає зображень", folder.lastPathComponent) }
                         self.window?.title = folder.lastPathComponent
@@ -980,6 +1007,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 removeFromList(Set(done.map { $0.original }))
             }
             flash(mode == .move ? L("Переміщено в «%@»", folder.lastPathComponent) : L("Скопійовано в «%@»", folder.lastPathComponent))
+            foldersChanged([folder, url.deletingLastPathComponent()])
         } catch {
             showError(L("Не вдалося перенести «%@»", url.lastPathComponent), error)
         }
@@ -1090,11 +1118,18 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 }
                 self.flash(mode == .move ? L("Переміщено %d фото в «%@»", frameCount, folder.lastPathComponent)
                                          : L("Скопійовано %d фото в «%@»", frameCount, folder.lastPathComponent))
+                self.foldersChanged([folder] + groups.prefix(1).map { $0[0].deletingLastPathComponent() })
                 if let (url, error) = failure {
                     self.showError(L("Не вдалося перенести «%@»", url.lastPathComponent), error)
                 }
             }
         }
+    }
+
+    /// Після переміщення: оновити в панелі папок кількість фото і нові підпапки.
+    private func foldersChanged(_ folders: [URL]) {
+        for f in Set(folders.map(\.standardizedFileURL)) { folderPanel.refresh(f) }
+        for f in Set(folders.map { $0.deletingLastPathComponent().standardizedFileURL }) { folderPanel.refresh(f) }
     }
 
     /// Меню «Файл → Папка для відсортованих…».
@@ -1324,6 +1359,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             setStripShown(false)
         }
 
+        // Лівий край — панель папок
+        if !foldersPinned {
+            if !foldersAutoShown, point.x <= 6, point.y > ThumbnailStripView.height {
+                setFoldersAutoShown(true)
+            } else if foldersAutoShown, point.x > FolderPanelView.width + 30 {
+                setFoldersAutoShown(false)
+            }
+        }
+
         // Правий край — інформаційна панель
         guard !isPinned, let width = window?.contentView?.bounds.width else { return }
         if !autoShown, point.x >= width - 8 {
@@ -1358,6 +1402,43 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         index = target
         showCurrent()
         window?.makeFirstResponder(canvas)
+    }
+
+    var isFolderPanelPinned: Bool { foldersPinned }
+
+    /// P: закріпити або відкріпити панель папок.
+    func toggleFolderPanel() {
+        foldersPinned.toggle()
+        foldersAutoShown = false
+        UserDefaults.standard.set(foldersPinned, forKey: Self.foldersDefaultsKey)
+        applyFolderPanelState(animated: true)
+    }
+
+    private func setFoldersAutoShown(_ shown: Bool) {
+        guard !foldersPinned, foldersAutoShown != shown else { return }
+        foldersAutoShown = shown
+        applyFolderPanelState(animated: true)
+    }
+
+    private func applyFolderPanelState(animated: Bool) {
+        let visible = foldersPinned || foldersAutoShown
+        stageToLeftEdge.isActive = !foldersPinned
+        stageToFolders.isActive = foldersPinned
+        let offset: CGFloat = visible ? 0 : -FolderPanelView.width
+        let alpha: CGFloat = visible ? 1 : 0
+        guard animated, let container = window?.contentView else {
+            folderLeading.constant = offset
+            folderPanel.alphaValue = alpha
+            return
+        }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.18
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            ctx.allowsImplicitAnimation = true
+            folderLeading.animator().constant = offset
+            folderPanel.animator().alphaValue = alpha
+            container.layoutSubtreeIfNeeded()
+        }
     }
 
     private func setAutoShown(_ shown: Bool) {
@@ -1421,6 +1502,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         case 53:                                        // Esc — повністю закрити програму
             NSApp.terminate(nil)
         case 34, 48: togglePanel()                      // I, Tab
+        case 35: toggleFolderPanel()                    // P — панель папок
         case 17:                                        // T — рядок зверху
             let on = !canvas.isOverlayEnabled
             stage.left.isOverlayEnabled = on

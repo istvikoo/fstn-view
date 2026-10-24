@@ -57,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     @objc func toggleInfoPanel(_ sender: Any?) { viewer().togglePanel() }
+    @objc func toggleFolderPanel(_ sender: Any?) { viewer().toggleFolderPanel() }
     @objc func fitToWindow(_ sender: Any?) { viewer().fit() }
     @objc func toggleRawDevelop(_ sender: Any?) { viewer().toggleRawDevelop() }
     @objc func toggleGroupPairs(_ sender: Any?) { viewer().toggleGroupPairs() }
@@ -96,6 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(toggleInfoPanel(_:)) {
             menuItem.state = (controller?.isPanelPinned ?? false) ? .on : .off
+        }
+        if menuItem.action == #selector(toggleFolderPanel(_:)) {
+            menuItem.state = (controller?.isFolderPanelPinned ?? false) ? .on : .off
         }
         if menuItem.action == #selector(toggleGroupPairs(_:)) {
             menuItem.state = (controller?.groupsPairs ?? true) ? .on : .off
@@ -172,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         _ = submenu(L("Вигляд")) { m in
             add(m, L("Закріпити інформаційну панель (I)"), #selector(toggleInfoPanel(_:)), "i")
+            add(m, L("Закріпити панель папок (P)"), #selector(toggleFolderPanel(_:)), "p", [.command, .shift])
             m.addItem(.separator())
             add(m, L("Проявити RAW / вбудований JPEG (A)"), #selector(toggleRawDevelop(_:)))
             add(m, L("Обʼєднувати пари RAW+JPEG"), #selector(toggleGroupPairs(_:)))

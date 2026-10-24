@@ -64,6 +64,13 @@ final class ImageLoader {
         supportedExtensions.contains(url.pathExtension.lowercased())
     }
 
+    /// Скільки зображень у папці (без сортування — для панелі папок).
+    static func countImages(in folder: URL) -> Int {
+        let items = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil,
+                                                                   options: [.skipsHiddenFiles])) ?? []
+        return items.reduce(0) { $0 + (isSupported($1) ? 1 : 0) }
+    }
+
     static func listImages(in folder: URL) -> [URL] {
         let items = (try? FileManager.default.contentsOfDirectory(
             at: folder,
