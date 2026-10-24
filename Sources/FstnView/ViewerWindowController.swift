@@ -673,11 +673,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Переміщує фото (разом із парою RAW+JPEG) в Кошик і показує наступне.
-    private func moveToTrash(_ url: URL) {
+    /// Усі файли кадру: фото, його RAW/JPEG-пара і файл-супутник з оцінкою (IMG_0001.xmp).
+    private func frameGroup(_ url: URL) -> [URL] {
         let photos = [url] + companions(of: url)
-        // Файл-супутник з оцінкою (IMG_0001.xmp) — разом із фото
         let sidecars = Set(photos.map(Ratings.sidecar(for:))).filter { FileManager.default.fileExists(atPath: $0.path) }
-        let group = photos + sidecars.sorted { $0.path < $1.path }
+        return photos + sidecars.sorted { $0.path < $1.path }
+    }
+
+    private func moveToTrash(_ url: URL) {
+        let group = frameGroup(url)
         NSWorkspace.shared.recycle(group) { [weak self] trashed, error in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -687,33 +691,38 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                     self.showError(L("Не вдалося перемістити «%@» у Кошик", url.lastPathComponent), error)
                     return
                 }
-                let removed = Set(moved.map { $0.original })
-                for u in removed {
-                    self.loader.forget(u)
-                    ThumbnailCache.shared.forget(u)
-                }
-                let currentURL = self.files.indices.contains(self.index) ? self.files[self.index] : nil
-                let before = self.files.prefix(self.index).filter { removed.contains($0) }.count
-                self.allFiles.removeAll { removed.contains($0) }
-                if self.files.isEmpty {
-                    self.current = nil
-                    self.index = 0
-                    self.clearInfo()
-                    self.state.fileName = ""
-                    self.updatePosition()
-                    self.showHint { L("У папці більше немає зображень") }
-                    return
-                }
-                if let currentURL, !removed.contains(currentURL) {
-                    // Поточне фото лишилось — лише зсуваємо номер
-                    self.index = self.files.firstIndex(of: currentURL) ?? 0
-                    self.updatePosition()
-                } else {
-                    // Видалили поточне — показуємо наступне (або попереднє, якщо це було останнє)
-                    self.index = min(max(self.index - before, 0), self.files.count - 1)
-                    self.showCurrent()
-                }
+                self.removeFromList(Set(moved.map { $0.original }))
             }
+        }
+    }
+
+    /// Прибирає зі списку файли, яких у папці більше немає (видалені або переміщені), і показує наступне фото.
+    private func removeFromList(_ removed: Set<URL>) {
+        for u in removed {
+            loader.forget(u)
+            ThumbnailCache.shared.forget(u)
+            marks[u] = nil
+        }
+        let currentURL = files.indices.contains(index) ? files[index] : nil
+        let before = files.prefix(index).filter { removed.contains($0) }.count
+        allFiles.removeAll { removed.contains($0) }
+        if files.isEmpty {
+            current = nil
+            index = 0
+            clearInfo()
+            state.fileName = ""
+            updatePosition()
+            showHint { L("У папці більше немає зображень") }
+            return
+        }
+        if let currentURL, !removed.contains(currentURL) {
+            // Поточне фото лишилось — лише зсуваємо номер
+            index = files.firstIndex(of: currentURL) ?? 0
+            updatePosition()
+        } else {
+            // Прибрали поточне — показуємо наступне (або попереднє, якщо це було останнє)
+            index = min(max(index - before, 0), files.count - 1)
+            showCurrent()
         }
     }
 
@@ -751,6 +760,179 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    // MARK: - Відсортовано (M / C, «Перемістити позначені…»)
+
+    /// Куди переносити: обрана папка або «Відсортовано» в поточній.
+    var sortFolderName: String {
+        guard let url = files.first else { return Sorter.customFolder?.lastPathComponent ?? L("Відсортовано") }
+        return Sorter.destination(for: url).lastPathComponent
+    }
+
+    /// M — перемістити поточне фото (з парою і .xmp), C — скопіювати.
+    func sendCurrent(_ mode: Sorter.Mode) {
+        guard files.indices.contains(index) else { return }
+        let url = files[index]
+        let folder = Sorter.destination(for: url)
+        do {
+            let done = try Sorter.transfer(frameGroup(url), to: folder, mode: mode)
+            if mode == .move {
+                deleted.append(done.map { (original: $0.original, trashed: $0.moved) })
+                removeFromList(Set(done.map { $0.original }))
+            }
+            flash(mode == .move ? L("Переміщено в «%@»", folder.lastPathComponent) : L("Скопійовано в «%@»", folder.lastPathComponent))
+        } catch {
+            showError(L("Не вдалося перенести «%@»", url.lastPathComponent), error)
+        }
+    }
+
+    private static let sortRuleKey = "sortMarkedRule"
+    private static let sortModeKey = "sortMarkedCopy"
+
+    /// «Перемістити позначені…»: усі фото з потрібною оцінкою або міткою — одним махом.
+    func sendMarked() {
+        guard !files.isEmpty, !isConfirmingDelete else { return }
+        let frames = files
+        let missing = frames.filter { marks[$0] == nil }
+        let sources = missing.map { pairedRaw[$0] ?? companions(of: $0).first(where: ImageLoader.isRaw) ?? $0 }
+        if !missing.isEmpty { flash(L("Читання оцінок…")) }
+        markQueue.async { [weak self] in
+            let found = sources.map(Ratings.read)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for (u, m) in zip(missing, found) where self.marks[u] == nil { self.marks[u] = m }
+                self.flashText = nil
+                self.updateOverlay()
+                self.showSortDialog(frames: frames.filter { self.files.contains($0) })
+            }
+        }
+    }
+
+    /// Правила відбору в діалозі: ★1+ … ★5+, потім кольорові мітки.
+    private func matches(_ mark: PhotoMark, rule: Int) -> Bool {
+        rule < 5 ? mark.rating >= rule + 1 : mark.label == ColorLabel.allCases[rule - 5]
+    }
+
+    private func showSortDialog(frames: [URL]) {
+        let rule = NSPopUpButton()
+        for r in 1...5 { rule.addItem(withTitle: L("%@ і вище", String(repeating: "★", count: r))) }
+        for label in ColorLabel.allCases { rule.addItem(withTitle: L("Мітка: %@", label.title)) }
+        rule.selectItem(at: min(UserDefaults.standard.integer(forKey: Self.sortRuleKey), rule.numberOfItems - 1))
+        let mode = NSPopUpButton()
+        mode.addItems(withTitles: [L("Перемістити"), L("Скопіювати")])
+        mode.selectItem(at: UserDefaults.standard.bool(forKey: Self.sortModeKey) ? 1 : 0)
+        let count = NSTextField(labelWithString: "")
+        let folder = frames.first.map(Sorter.destination(for:))
+        let whereLabel = NSTextField(labelWithString: L("Куди: %@", (folder?.path as NSString?)?.abbreviatingWithTildeInPath ?? ""))
+        whereLabel.lineBreakMode = .byTruncatingMiddle
+        whereLabel.textColor = .secondaryLabelColor
+
+        func selected() -> [URL] { frames.filter { matches(marks[$0] ?? PhotoMark(), rule: rule.indexOfSelectedItem) } }
+        let alert = NSAlert()
+        alert.messageText = L("Перемістити позначені фото")
+        alert.addButton(withTitle: L("Перемістити"))
+        alert.addButton(withTitle: L("Скасувати")).keyEquivalent = "\u{1b}"
+        let refresh = { [weak self] in
+            guard let self else { return }
+            let chosen = selected()
+            let fileCount = chosen.reduce(0) { $0 + self.frameGroup($1).count }
+            count.stringValue = L("Підходить: %d фото (%d файлів)", chosen.count, fileCount)
+            alert.buttons.first?.title = mode.indexOfSelectedItem == 1 ? L("Скопіювати") : L("Перемістити")
+            alert.buttons.first?.isEnabled = !chosen.isEmpty
+        }
+        let actions = PopUpActions(refresh)
+        rule.target = actions; rule.action = #selector(PopUpActions.changed)
+        mode.target = actions; mode.action = #selector(PopUpActions.changed)
+
+        func row(_ title: String, _ control: NSView) -> NSStackView {
+            let label = NSTextField(labelWithString: title)
+            label.alignment = .right
+            label.widthAnchor.constraint(equalToConstant: 90).isActive = true
+            return NSStackView(views: [label, control])
+        }
+        let stack = NSStackView(views: [row(L("Які фото:"), rule), row(L("Дія:"), mode), whereLabel, count])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.frame = NSRect(x: 0, y: 0, width: 340, height: 120)
+        whereLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 340).isActive = true
+        alert.accessoryView = stack
+        refresh()
+
+        isConfirmingDelete = true
+        let handle: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            _ = actions
+            guard let self else { return }
+            self.isConfirmingDelete = false
+            self.window?.makeFirstResponder(self.canvas)
+            UserDefaults.standard.set(rule.indexOfSelectedItem, forKey: Self.sortRuleKey)
+            UserDefaults.standard.set(mode.indexOfSelectedItem == 1, forKey: Self.sortModeKey)
+            guard response == .alertFirstButtonReturn, let folder else { return }
+            self.transferMarked(selected(), to: folder, mode: mode.indexOfSelectedItem == 1 ? .copy : .move)
+        }
+        if let window { alert.beginSheetModal(for: window, completionHandler: handle) } else { handle(alert.runModal()) }
+    }
+
+    private func transferMarked(_ frames: [URL], to folder: URL, mode: Sorter.Mode) {
+        let groups = frames.map(frameGroup)
+        flash(mode == .move ? L("Переміщення…") : L("Копіювання…"))
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var done: [(original: URL, moved: URL)] = []
+            var failure: (URL, Error)?
+            for group in groups {
+                do { done += try Sorter.transfer(group, to: folder, mode: mode) } catch { failure = (group[0], error); break }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let frameCount = groups.prefix { group in done.contains { $0.original == group[0] } }.count
+                if mode == .move, !done.isEmpty {
+                    self.deleted.append(done.map { (original: $0.original, trashed: $0.moved) })
+                    self.removeFromList(Set(done.map { $0.original }))
+                }
+                self.flash(mode == .move ? L("Переміщено %d фото в «%@»", frameCount, folder.lastPathComponent)
+                                         : L("Скопійовано %d фото в «%@»", frameCount, folder.lastPathComponent))
+                if let (url, error) = failure {
+                    self.showError(L("Не вдалося перенести «%@»", url.lastPathComponent), error)
+                }
+            }
+        }
+    }
+
+    /// Меню «Файл → Папка для відсортованих…».
+    func chooseSortFolder() {
+        let alert = NSAlert()
+        alert.messageText = L("Папка для відсортованих фото")
+        let now = Sorter.customFolder.map { ($0.path as NSString).abbreviatingWithTildeInPath }
+            ?? L("підпапка «%@» у папці з фото", L("Відсортовано"))
+        alert.informativeText = L("Зараз: %@", now)
+        alert.addButton(withTitle: L("Обрати папку…"))
+        alert.addButton(withTitle: L("Підпапка «%@»", L("Відсортовано")))
+        alert.addButton(withTitle: L("Скасувати")).keyEquivalent = "\u{1b}"
+        let handle: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard let self else { return }
+            switch response {
+            case .alertFirstButtonReturn:
+                let panel = NSOpenPanel()
+                panel.canChooseDirectories = true
+                panel.canChooseFiles = false
+                panel.canCreateDirectories = true
+                panel.prompt = L("Обрати")
+                panel.message = L("Куди переносити фото клавішами M і C")
+                let done: (NSApplication.ModalResponse) -> Void = { r in
+                    if r == .OK, let url = panel.url { Sorter.customFolder = url }
+                }
+                // Аркуш із аркуша не відкривається — чекаємо, поки закриється попередній
+                DispatchQueue.main.async {
+                    if let window = self.window { panel.beginSheetModal(for: window, completionHandler: done) } else { done(panel.runModal()) }
+                }
+            case .alertSecondButtonReturn:
+                Sorter.customFolder = nil
+            default:
+                break
+            }
+        }
+        if let window { alert.beginSheetModal(for: window, completionHandler: handle) } else { handle(alert.runModal()) }
+    }
+
     // MARK: - Меню на правий клік
 
     private func contextMenu() -> NSMenu? {
@@ -768,6 +950,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let editorTitle = externalEditorName.map { L("Відкрити в %@ (E)", $0) } ?? L("Відкрити в іншій програмі (E)")
         item(editorTitle) { [weak self] in self?.openInExternalEditor() }
         item(L("Показати у Finder"), "r", .command) { [weak self] in self?.showInFinder() }
+        menu.addItem(.separator())
+        item(L("Перемістити в «%@» (M)", sortFolderName)) { [weak self] in self?.sendCurrent(.move) }
+        item(L("Скопіювати в «%@» (C)", sortFolderName)) { [weak self] in self?.sendCurrent(.copy) }
+        item(L("Перемістити позначені…")) { [weak self] in self?.sendMarked() }
         menu.addItem(.separator())
         item(L("Копіювати файл"), "c", .command) { [weak self] in self?.copyFileToPasteboard() }
         item(L("Копіювати як картинку"), "c", [.command, .option]) { [weak self] in self?.copyToPasteboard() }
@@ -800,7 +986,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         item(canvas.isFit ? L("Реальний розмір 100% (Z)") : L("Вписати у вікно (0)")) { [weak self] in self?.toggleActualSize() }
         menu.addItem(.separator())
         item(L("Перемістити в Кошик (Delete)")) { [weak self] in self?.deleteCurrent() }
-        item(L("Відновити видалене фото"), "z", .command, enabled: canUndoDelete) { [weak self] in self?.undoDelete() }
+        item(L("Скасувати видалення або переміщення"), "z", .command, enabled: canUndoDelete) { [weak self] in self?.undoDelete() }
         menu.addItem(.separator())
         item(L("Закріпити інформаційну панель (I)")) { [weak self] in self?.togglePanel() }
         menu.items.last?.state = isPinned ? .on : .off
@@ -1032,6 +1218,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         case 37: rotate(by: -1)                         // L — повернути проти годинникової
         case 15: rotate(by: 1)                          // R — повернути за годинниковою
         case 14: openInExternalEditor()                 // E — відкрити в іншій програмі
+        case 46: sendCurrent(.move)                     // M — перемістити у «Відсортовано»
+        case 8: sendCurrent(.copy)                      // C — скопіювати у «Відсортовано»
         case 6: toggleActualSize()                      // Z
         case 18, 83: setRating(1)                       // 1–5 — зірки (і на цифровому блоці)
         case 19, 84: setRating(2)

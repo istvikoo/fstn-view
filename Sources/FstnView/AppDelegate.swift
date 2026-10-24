@@ -67,6 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func copyFile(_ sender: Any?) { viewer().copyFileToPasteboard() }
     @objc func openInEditor(_ sender: Any?) { viewer().openInExternalEditor() }
     @objc func chooseEditor(_ sender: Any?) { viewer().chooseExternalEditor() }
+    @objc func moveToSorted(_ sender: Any?) { viewer().sendCurrent(.move) }
+    @objc func copyToSorted(_ sender: Any?) { viewer().sendCurrent(.copy) }
+    @objc func moveMarked(_ sender: Any?) { viewer().sendMarked() }
+    @objc func chooseSortFolder(_ sender: Any?) { viewer().chooseSortFolder() }
     @objc func actualSize(_ sender: Any?) { viewer().toggleActualSize() }
     @objc func zoomIn(_ sender: Any?) { viewer().zoomIn() }
     @objc func zoomOut(_ sender: Any?) { viewer().zoomOut() }
@@ -143,12 +147,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             add(m, L("Відкрити в іншій програмі (E)"), #selector(openInEditor(_:)))
             add(m, L("Обрати програму для E…"), #selector(chooseEditor(_:)))
             m.addItem(.separator())
+            add(m, L("Перемістити у відсортовані (M)"), #selector(moveToSorted(_:)))
+            add(m, L("Скопіювати у відсортовані (C)"), #selector(copyToSorted(_:)))
+            add(m, L("Перемістити позначені…"), #selector(moveMarked(_:)), "m", [.command, .shift])
+            add(m, L("Папка для відсортованих…"), #selector(chooseSortFolder(_:)))
+            m.addItem(.separator())
             let close = NSMenuItem(title: L("Закрити вікно"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
             m.addItem(close)
         }
 
         _ = submenu(L("Правка")) { m in
-            add(m, L("Відновити видалене фото"), #selector(undoDelete(_:)), "z")
+            add(m, L("Скасувати видалення або переміщення"), #selector(undoDelete(_:)), "z")
             add(m, L("Копіювати файл"), #selector(copyFile(_:)), "c")
             add(m, L("Копіювати як картинку"), #selector(copyImage(_:)), "c", [.command, .option])
             m.addItem(.separator())

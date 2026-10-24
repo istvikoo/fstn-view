@@ -16,6 +16,7 @@ almost instantly and shows an info panel with EXIF data and a histogram.
 - **Develop RAW on demand.** RAW files are shown from their embedded JPEG for speed. Press `A` to develop the current RAW file with the macOS RAW engine (about 0.5 s); 100% zoom then shows the developed image too. Press `A` again to go back. Some cameras (for example Sony ARW) embed only a small preview, so it looks softer full screen until you press `A`.
 - **RAW+JPEG pairs as one photo.** When a folder has `IMG_0001.JPG` and `IMG_0001.CR3`, only the JPEG is shown and the counter counts photos, not files; the line says `[ JPEG+RAW ]`. Press `A` to develop the paired RAW, and `A` again to go back to the JPEG. `E`, `⌘C` and `⌘R` use the file on screen. Turn it off with *View → Group RAW+JPEG Pairs*.
 - **Ratings and color labels.** Press `1`–`5` for stars and `6`–`9` for a red, yellow, green or blue label (press the same key again to clear it). They are saved as standard XMP, so Lightroom, Bridge and Capture One see them: RAW files get a sidecar `IMG_0001.xmp` (an existing Lightroom sidecar is only updated), JPEGs get it inside the file. Only the XMP block is rewritten; the picture and the camera EXIF stay byte for byte the same. RAW+JPEG pairs are rated together.
+- **Send picks to a “Sorted” folder.** `M` moves the current photo, `C` copies it, together with its RAW/JPEG pair and `.xmp`; the next photo opens and `⌘Z` undoes a move. *File → Move Marked…* (`⇧⌘M`) moves or copies every photo with a chosen rating (★3 and above, etc.) or color label at once. By default the folder is a `Sorted` subfolder next to the photos; pick another one in *File → Folder for Sorted…*. Existing files are never overwritten: the copy gets a number, like `IMG_0001 (2).JPG`.
 - **Delete to Trash** with `Delete` / `Backspace`. The app asks for confirmation (with a *Don’t show again* option), and `⌘Z` restores the last deleted photo. RAW+JPEG pairs with the same name (`IMG_0001.CR3` + `IMG_0001.JPG`) are deleted and restored together, along with their `.xmp` sidecar.
 - **Rotate** with `L` / `R` (on screen only, files are not changed).
 - **Open in another app** (Lightroom, Photoshop, DxO…) with `E`; the app is chosen the first time. **Show in Finder** with `⌘R`.
@@ -55,6 +56,8 @@ Requires macOS 14 Sonoma or later.
 | Star rating / clear | `1`–`5` (same key again) |
 | Color label red, yellow, green, blue | `6` `7` `8` `9` |
 | Develop current RAW (or the RAW of a JPEG pair) / back | `A` |
+| Move / copy to the Sorted folder | `M` / `C` |
+| Move or copy all marked photos | `⇧⌘M` |
 | Move to Trash / restore | `Delete` or `Backspace` / `⌘Z` |
 | Rotate left / right | `L` / `R` |
 | Open in another app | `E` |
