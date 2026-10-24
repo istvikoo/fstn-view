@@ -60,8 +60,19 @@ final class ImageLoader {
         return exts
     }()
 
+    /// Розширення RAW-форматів (CR3, CR2, NEF, ARW, DNG…). Рахується один раз: перевірка «чи це RAW»
+    /// викликається для кожного файлу папки, а створення UTType для кожного виклику повільне.
+    /// (Тип береться за розширенням, як у Finder: .tif — це TIFF, хоч якийсь RAW-формат теж його оголошує.)
+    private static let rawExtensions: Set<String> = supportedExtensions.filter {
+        UTType(filenameExtension: $0)?.conforms(to: .rawImage) ?? false
+    }
+
     static func isSupported(_ url: URL) -> Bool {
         supportedExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    static func isRaw(_ url: URL) -> Bool {
+        rawExtensions.contains(url.pathExtension.lowercased())
     }
 
     /// Скільки зображень у папці (без сортування — для панелі папок).
@@ -204,10 +215,6 @@ final class ImageLoader {
     }
 
     // MARK: - Проявка RAW (клавіша A)
-
-    static func isRaw(_ url: URL) -> Bool {
-        UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) ?? false
-    }
 
     private let rawCache: NSCache<NSURL, LoadedImage> = {
         let c = NSCache<NSURL, LoadedImage>()
@@ -359,13 +366,12 @@ final class ImageLoader {
         let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
         let info = ImageInfo.make(url: url, source: source, props: props)
         let fullSide = Int(max(info.pixelSize.width, info.pixelSize.height))
-        let isRawFile = UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) ?? false
+        let isRaw = isRaw(url)
         // Для RAW розмір «рівно вдвічі» не прискорює (вбудоване прев'ю), тож лишаємо розмір екрана
-        let target = isRawFile ? (fullSide > 0 ? min(maxPixel, fullSide) : maxPixel)
-                               : previewTarget(fullSide: fullSide, maxPixel: maxPixel)
+        let target = isRaw ? (fullSide > 0 ? min(maxPixel, fullSide) : maxPixel)
+                           : previewTarget(fullSide: fullSide, maxPixel: maxPixel)
 
         var preview: CGImage?
-        let isRaw = UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) ?? false
         if isRaw {
             // RAW за замовчуванням показуємо з вбудованого JPEG камери, навіть якщо він невеликий (Sony ARW — 1616 px).
             // Справжня проявка — лише за клавішею A.
@@ -422,8 +428,7 @@ final class ImageLoader {
         // Якщо швидке прев'ю майже таке ж велике, як звичайне, — сенсу немає
         guard fullSide > 0, Double(quickSide) < Double(previewTarget(fullSide: fullSide, maxPixel: maxPixel)) * 0.6 else { return nil }
 
-        let isRaw = UTType(filenameExtension: url.pathExtension)?.conforms(to: .rawImage) ?? false
-        guard let image = makeThumbnail(source, maxPixel: quickSide, fromImageAlways: !isRaw) else { return nil }
+        guard let image = makeThumbnail(source, maxPixel: quickSide, fromImageAlways: !isRaw(url)) else { return nil }
         return QuickPreview(url: url, image: image, displaySize: displaySize(info: info, image: image), info: info,
                             decodeTime: CFAbsoluteTimeGetCurrent() - start)
     }
@@ -450,7 +455,7 @@ final class ImageLoader {
         guard side > 0 else { return nil }
         // RAW: «оригінал» — це вбудований JPEG камери в найбільшому розмірі, який є у файлі
         // (у Canon повнорозмірний, у Sony ARW лише 1616 px). Сам RAW проявляється тільки за клавішею A.
-        if ImageLoader.isRaw(url), let embedded = makeThumbnail(source, maxPixel: side, fromImageAlways: false) {
+        if isRaw(url), let embedded = makeThumbnail(source, maxPixel: side, fromImageAlways: false) {
             return embedded
         }
         return makeThumbnail(source, maxPixel: side, fromImageAlways: true)

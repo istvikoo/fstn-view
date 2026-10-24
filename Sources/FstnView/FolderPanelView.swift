@@ -36,6 +36,15 @@ final class FolderNode {
     func invalidate() { children = nil }
 }
 
+extension URL {
+    /// Папка лежить у `parent` (або це вона сама). Порівнюємо цілі складові шляху,
+    /// щоб /Users/ann2 не вважалася всередині /Users/ann.
+    func isInside(_ parent: URL) -> Bool {
+        let a = standardizedFileURL.pathComponents, b = parent.standardizedFileURL.pathComponents
+        return a.count >= b.count && Array(a.prefix(b.count)) == b
+    }
+}
+
 /// Заголовок розділу в панелі («Вибране», «Папки»).
 private final class SectionNode {
     let title: String
@@ -154,7 +163,7 @@ final class FolderPanelView: NSVisualEffectView, NSOutlineViewDataSource, NSOutl
         // Корінь дерева — домашня папка або диск, на якому лежить папка
         let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
         let root: URL
-        if folder.path.hasPrefix(home.path) {
+        if folder.isInside(home) {
             root = home
         } else if let volume = try? folder.resourceValues(forKeys: [.volumeURLKey]).volume {
             root = volume.standardizedFileURL
@@ -200,7 +209,7 @@ final class FolderPanelView: NSVisualEffectView, NSOutlineViewDataSource, NSOutl
         func find(_ nodes: [FolderNode]) -> FolderNode? {
             for n in nodes {
                 if n.url == folder { return n }
-                if folder.path.hasPrefix(n.url.path), let kids = outline.isItemExpanded(n) ? n.loadChildren() : nil,
+                if folder.isInside(n.url), let kids = outline.isItemExpanded(n) ? n.loadChildren() : nil,
                    let hit = find(kids) { return hit }
             }
             return nil

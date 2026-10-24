@@ -49,7 +49,6 @@ private let english: [String: String] = [
     "Відкрити…": "Open…",
     "Закрити вікно": "Close Window",
     "Правка": "Edit",
-    "Відновити видалене фото": "Restore Deleted Photo",
     "Перемістити в Кошик (Delete)": "Move to Trash (Delete)",
     "Вигляд": "View",
     "Закріпити інформаційну панель (I)": "Pin Info Panel (I)",

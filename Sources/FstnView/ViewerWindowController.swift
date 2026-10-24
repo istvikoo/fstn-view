@@ -42,6 +42,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     }
     /// JPEG → його RAW-пара (IMG_0001.JPG → IMG_0001.CR3). RAW схований зі списку, A проявляє саме його.
     private var pairedRaw: [URL: URL] = [:]
+    /// Файли з однаковою назвою без розширення (для пошуку пари без перебору всієї папки).
+    private var sameName: [String: [URL]] = [:]
     private static let groupPairsKey = "groupRawJpegPairs"
     private var index = 0
     private var direction = 1
@@ -56,8 +58,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private var rawDeveloping: URL?
     /// Фото, для якого на екрані вбудований JPEG камери замість типової проявки (A на Sony ARW тощо).
     private var embeddedShownFor: URL?
-    /// Видалені в Кошик фото (для ⌘Z). Одна група — одне видалення (напр. пара RAW+JPEG).
-    private var deleted: [[(original: URL, trashed: URL)]] = []
+    /// Що повертає ⌘Z: видалені в Кошик або переміщені у «Відсортовано» файли.
+    /// Один запис — одна дія (напр. пара RAW+JPEG з .xmp або всі позначені фото разом).
+    private var undoStack: [[(original: URL, movedTo: URL)]] = []
     /// Поворот кожного фото на екрані (L / R), поки програма відкрита.
     private var rotations: [URL: Int] = [:]
     private var listingToken = UUID()
@@ -193,7 +196,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let isFolder = isDir.boolValue
         let folder = isFolder ? url : url.deletingLastPathComponent()
         if comparing { exitCompare() }
-        folderPanel.setCurrentFolder(folder)
+        marks = [:]                 // оцінки могли змінити в іншій програмі — читаємо заново
+        // Дерево папок читає диск — оновлюємо його вже після того, як фото з'явилось
+        DispatchQueue.main.async { [weak self] in self?.folderPanel.setCurrentFolder(folder) }
         let token = UUID()
         listingToken = token
 
@@ -423,16 +428,13 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     /// Будує `files` з `allFiles`: RAW з JPEG-парою ховається, JPEG стає одним кадром.
     private func regroup() {
+        var groups: [String: [URL]] = [:]
+        for u in allFiles { groups[Self.nameKey(u), default: []].append(u) }
+        sameName = groups
         guard groupsPairs else {
             pairedRaw = [:]
             files = allFiles
             return
-        }
-        var groups: [String: [URL]] = [:]
-        for u in allFiles {
-            let key = u.deletingLastPathComponent().standardizedFileURL.path + "/"
-                + u.deletingPathExtension().lastPathComponent.lowercased()
-            groups[key, default: []].append(u)
         }
         var pairs: [URL: URL] = [:]
         var hidden = Set<URL>()
@@ -683,7 +685,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         guard target != index else { return }
         direction = first ? 1 : -1
         index = target
-        showCurrent()
+        showCurrent(keepingView: canvas.viewState)
     }
 
     private func zoomChanged() {
@@ -745,7 +747,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private func markTargets(_ url: URL) -> [URL] { [url] + companions(of: url) }
 
     private func loadMark(for url: URL) {
-        let source = pairedRaw[url] ?? companions(of: url).first(where: ImageLoader.isRaw) ?? url
+        let source = markSource(url)
         markQueue.async { [weak self] in
             let mark = Ratings.read(source)
             DispatchQueue.main.async {
@@ -760,7 +762,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     func setRating(_ rating: Int) {
         guard files.indices.contains(index) else { return }
         let url = files[index]
-        var mark = marks[url] ?? Ratings.read(pairedRaw[url] ?? url)
+        var mark = marks[url] ?? Ratings.read(markSource(url))
         mark.rating = mark.rating == rating ? 0 : rating
         applyMark(mark, to: url)
     }
@@ -769,7 +771,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     func setLabel(_ label: ColorLabel?) {
         guard files.indices.contains(index) else { return }
         let url = files[index]
-        var mark = marks[url] ?? Ratings.read(pairedRaw[url] ?? url)
+        var mark = marks[url] ?? Ratings.read(markSource(url))
         mark.label = mark.label == label ? nil : label
         applyMark(mark, to: url)
     }
@@ -848,11 +850,12 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Видалення
 
     private static let skipDeleteConfirmKey = "skipDeleteConfirmation"
-    private var isConfirmingDelete = false
+    /// Відкрито діалог-аркуш (видалення, «Перемістити позначені…») — другий не відкриваємо.
+    private var isShowingSheet = false
 
     /// Delete / Backspace. Поки користувач не поставив «Більше не показувати», спершу питаємо.
     func deleteCurrent() {
-        guard files.indices.contains(index), !isConfirmingDelete else { return }
+        guard files.indices.contains(index), !isShowingSheet else { return }
         let url = files[index]
         if UserDefaults.standard.bool(forKey: Self.skipDeleteConfirmKey) {
             moveToTrash(url)
@@ -870,14 +873,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
         let handle: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard let self else { return }
-            self.isConfirmingDelete = false
+            self.isShowingSheet = false
             if alert.suppressionButton?.state == .on {
                 UserDefaults.standard.set(true, forKey: Self.skipDeleteConfirmKey)
             }
             if response == .alertFirstButtonReturn { self.moveToTrash(url) }
             self.window?.makeFirstResponder(self.canvas)
         }
-        isConfirmingDelete = true
+        isShowingSheet = true
         if let window {
             alert.beginSheetModal(for: window, completionHandler: handle)
         } else {
@@ -888,17 +891,20 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     /// Пара до фото: файл з тим самим іменем, але іншим розширенням, якщо один із них RAW
     /// (IMG_3447.CR3 + IMG_3447.JPG). Видаляються і відновлюються разом.
     private func companions(of url: URL) -> [URL] {
-        let base = url.deletingPathExtension().lastPathComponent.lowercased()
-        let folder = url.deletingLastPathComponent().standardizedFileURL.path
-        return allFiles.filter { other in
-            other != url
-                && other.deletingPathExtension().lastPathComponent.lowercased() == base
-                && other.deletingLastPathComponent().standardizedFileURL.path == folder
-                && (ImageLoader.isRaw(other) != ImageLoader.isRaw(url))
-        }
+        let isRaw = ImageLoader.isRaw(url)
+        return (sameName[Self.nameKey(url)] ?? []).filter { $0 != url && ImageLoader.isRaw($0) != isRaw }
     }
 
-    /// Переміщує фото (разом із парою RAW+JPEG) в Кошик і показує наступне.
+    /// «папка/ім'я без розширення» — однакове у RAW і JPEG одного кадру.
+    private static func nameKey(_ url: URL) -> String {
+        url.deletingLastPathComponent().standardizedFileURL.path + "/" + url.deletingPathExtension().lastPathComponent.lowercased()
+    }
+
+    /// Звідки читати оцінку кадру: з RAW (його .xmp головний), інакше з самого файлу.
+    private func markSource(_ url: URL) -> URL {
+        pairedRaw[url] ?? companions(of: url).first(where: ImageLoader.isRaw) ?? url
+    }
+
     /// Усі файли кадру: фото, його RAW/JPEG-пара і файл-супутник з оцінкою (IMG_0001.xmp).
     private func frameGroup(_ url: URL) -> [URL] {
         let photos = [url] + companions(of: url)
@@ -906,13 +912,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         return photos + sidecars.sorted { $0.path < $1.path }
     }
 
+    /// Переміщує кадр (фото, пару RAW+JPEG і .xmp) в Кошик і показує наступне.
     private func moveToTrash(_ url: URL) {
         let group = frameGroup(url)
         NSWorkspace.shared.recycle(group) { [weak self] trashed, error in
             DispatchQueue.main.async {
                 guard let self else { return }
-                let moved = group.compactMap { original in trashed[original].map { (original: original, trashed: $0) } }
-                if !moved.isEmpty { self.deleted.append(moved) }
+                let moved = group.compactMap { original in trashed[original].map { (original: original, movedTo: $0) } }
+                if !moved.isEmpty { self.undoStack.append(moved) }
                 if let error, moved.isEmpty {
                     self.showError(L("Не вдалося перемістити «%@» у Кошик", url.lastPathComponent), error)
                     return
@@ -953,21 +960,22 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    var canUndoDelete: Bool { !deleted.isEmpty }
+    var canUndo: Bool { !undoStack.isEmpty }
 
-    /// ⌘Z: повертає останнє видалене (разом із парою) з Кошика на старе місце.
-    func undoDelete() {
-        guard let group = deleted.popLast() else { NSSound.beep(); return }
+    /// ⌘Z: повертає останнє видалене (з Кошика) або переміщене (з «Відсортовано») на старе місце.
+    func undo() {
+        guard let group = undoStack.popLast() else { NSSound.beep(); return }
         var restored: [URL] = []
         for item in group {
             do {
-                try FileManager.default.moveItem(at: item.trashed, to: item.original)
+                try FileManager.default.moveItem(at: item.movedTo, to: item.original)
                 restored.append(item.original)
             } catch {
                 showError(L("Не вдалося відновити «%@»", item.original.lastPathComponent), error)
             }
         }
         guard let first = restored.first else { return }
+        foldersChanged(group.map { $0.movedTo.deletingLastPathComponent() } + [first.deletingLastPathComponent()])
         // Повертаємо у список, якщо переглядаємо ту саму папку
         let folder = first.deletingLastPathComponent().standardizedFileURL.path
         let currentFolder = files.first?.deletingLastPathComponent().standardizedFileURL.path
@@ -1003,7 +1011,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         do {
             let done = try Sorter.transfer(frameGroup(url), to: folder, mode: mode)
             if mode == .move {
-                deleted.append(done.map { (original: $0.original, trashed: $0.moved) })
+                undoStack.append(done.map { (original: $0.original, movedTo: $0.moved) })
                 removeFromList(Set(done.map { $0.original }))
             }
             flash(mode == .move ? L("Переміщено в «%@»", folder.lastPathComponent) : L("Скопійовано в «%@»", folder.lastPathComponent))
@@ -1018,10 +1026,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     /// «Перемістити позначені…»: усі фото з потрібною оцінкою або міткою — одним махом.
     func sendMarked() {
-        guard !files.isEmpty, !isConfirmingDelete else { return }
+        guard !files.isEmpty, !isShowingSheet else { return }
         let frames = files
         let missing = frames.filter { marks[$0] == nil }
-        let sources = missing.map { pairedRaw[$0] ?? companions(of: $0).first(where: ImageLoader.isRaw) ?? $0 }
+        let sources = missing.map(markSource)
         if !missing.isEmpty { flash(L("Читання оцінок…")) }
         markQueue.async { [weak self] in
             let found = sources.map(Ratings.read)
@@ -1086,11 +1094,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         alert.accessoryView = stack
         refresh()
 
-        isConfirmingDelete = true
+        isShowingSheet = true
         let handle: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             _ = actions
             guard let self else { return }
-            self.isConfirmingDelete = false
+            self.isShowingSheet = false
             self.window?.makeFirstResponder(self.canvas)
             UserDefaults.standard.set(rule.indexOfSelectedItem, forKey: Self.sortRuleKey)
             UserDefaults.standard.set(mode.indexOfSelectedItem == 1, forKey: Self.sortModeKey)
@@ -1113,7 +1121,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 guard let self else { return }
                 let frameCount = groups.prefix { group in done.contains { $0.original == group[0] } }.count
                 if mode == .move, !done.isEmpty {
-                    self.deleted.append(done.map { (original: $0.original, trashed: $0.moved) })
+                    self.undoStack.append(done.map { (original: $0.original, movedTo: $0.moved) })
                     self.removeFromList(Set(done.map { $0.original }))
                 }
                 self.flash(mode == .move ? L("Переміщено %d фото в «%@»", frameCount, folder.lastPathComponent)
@@ -1226,7 +1234,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         item(canvas.isFit ? L("Реальний розмір 100% (Z)") : L("Вписати у вікно (0)")) { [weak self] in self?.toggleActualSize() }
         menu.addItem(.separator())
         item(L("Перемістити в Кошик (Delete)")) { [weak self] in self?.deleteCurrent() }
-        item(L("Скасувати видалення або переміщення"), "z", .command, enabled: canUndoDelete) { [weak self] in self?.undoDelete() }
+        item(L("Скасувати видалення або переміщення"), "z", .command, enabled: canUndo) { [weak self] in self?.undo() }
         menu.addItem(.separator())
         item(L("Закріпити інформаційну панель (I)")) { [weak self] in self?.togglePanel() }
         menu.items.last?.state = isPinned ? .on : .off
@@ -1400,7 +1408,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         guard files.indices.contains(target), target != index else { return }
         direction = target > index ? 1 : -1
         index = target
-        showCurrent()
+        showCurrent(keepingView: canvas.viewState)
         window?.makeFirstResponder(canvas)
     }
 

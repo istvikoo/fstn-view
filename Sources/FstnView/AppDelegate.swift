@@ -92,7 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     @objc func deleteImage(_ sender: Any?) { viewer().deleteCurrent() }
-    @objc func undoDelete(_ sender: Any?) { viewer().undoDelete() }
+    @objc func undo(_ sender: Any?) { viewer().undo() }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(toggleInfoPanel(_:)) {
@@ -111,8 +111,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             let name = controller?.externalEditorName
             menuItem.title = name.map { L("Відкрити в %@ (E)", $0) } ?? L("Відкрити в іншій програмі (E)")
         }
-        if menuItem.action == #selector(undoDelete(_:)) {
-            return controller?.canUndoDelete ?? false
+        if menuItem.action == #selector(undo(_:)) {
+            return controller?.canUndo ?? false
         }
         return true
     }
@@ -167,7 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
 
         _ = submenu(L("Правка")) { m in
-            add(m, L("Скасувати видалення або переміщення"), #selector(undoDelete(_:)), "z")
+            add(m, L("Скасувати видалення або переміщення"), #selector(undo(_:)), "z")
             add(m, L("Копіювати файл"), #selector(copyFile(_:)), "c")
             add(m, L("Копіювати як картинку"), #selector(copyImage(_:)), "c", [.command, .option])
             m.addItem(.separator())

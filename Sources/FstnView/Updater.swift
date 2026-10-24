@@ -1,8 +1,7 @@
 import AppKit
 
 /// Оновлення з GitHub Releases: шукає новішу версію, завантажує zip, замінює програму і перезапускає її.
-/// Щоб випустити оновлення: підняти CFBundleShortVersionString, ./build.sh і створити реліз з тегом vX.Y.Z,
-/// приклавши build/fstn-view-X.Y.Z.zip.
+/// Релізи збирає GitHub Actions (.github/workflows/release.yml) з тегу vX.Y.Z — див. README.
 final class Updater {
     static let shared = Updater()
 
