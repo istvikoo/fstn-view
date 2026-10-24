@@ -29,8 +29,9 @@ almost instantly and shows an info panel with EXIF data and a histogram.
 
 ## Install
 
-1. Download the latest `fstn-view-X.Y.Z.zip` from [Releases](https://github.com/istvikoo/fstn-view/releases).
-2. Unzip it and move **fstn view.app** to `/Applications`.
+1. Download the latest `fstn-view-X.Y.Z.dmg` from [Releases](https://github.com/istvikoo/fstn-view/releases).
+2. Open it and drag **fstn view** onto the **Applications** folder in the same window.
+   (The `.zip` next to it is used by the built-in updater; you can also unzip it and move the app manually.)
 3. The app is not notarized by Apple, so the first time you open it, **right-click → Open**, then confirm. Or run this command:
    ```
    xattr -dr com.apple.quarantine "/Applications/fstn view.app"
@@ -87,7 +88,8 @@ Only the Xcode Command Line Tools (Swift 5.10+) are needed. Full Xcode is not re
 ./build.sh
 ```
 
-This produces `build/fstn view.app` and `build/fstn-view-<version>.zip`.
+This produces `build/fstn view.app` (universal: Apple Silicon + Intel), `build/fstn-view-<version>.dmg` for installing and `build/fstn-view-<version>.zip` for the updater.
+The DMG window layout and background live in `Resources/dmg/`.
 
 ### Publishing a release
 
@@ -100,7 +102,7 @@ Releases are built automatically by GitHub Actions ([`.github/workflows/release.
    git push origin main v0.2.0
    ```
 
-The workflow checks that the tag matches the app version, builds the app on macOS, and publishes a release with `fstn-view-0.2.0.zip` and auto-generated notes.
+The workflow checks that the tag matches the app version, builds the app on macOS, and publishes a release with `fstn-view-0.2.0.dmg`, `fstn-view-0.2.0.zip` and auto-generated notes.
 Installed copies find the new release and update themselves.
 
 ## License

@@ -38,10 +38,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ZIP="build/fstn-view-$VERSION.zip"
+          DMG="build/fstn-view-$VERSION.dmg"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$ZIP" --clobber
+            gh release upload "$GITHUB_REF_NAME" "$DMG" "$ZIP" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$ZIP" \
+            gh release create "$GITHUB_REF_NAME" "$DMG" "$ZIP" \
               --title "fstn view $VERSION" \
               --generate-notes
           fi

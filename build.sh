@@ -41,5 +41,29 @@ ZIP="build/fstn-view-$VERSION.zip"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
 
+# DMG для встановлення перетягуванням: програма, ярлик «Програми» і фон зі стрілкою.
+# Розкладку вікна (Resources/dmg/DS_Store) один раз налаштовано у Finder і збережено в проєкті,
+# тож тут Finder не потрібен — це надійно і на GitHub Actions. (zip лишається для автооновлень.)
+DMG="build/fstn-view-$VERSION.dmg"
+STAGE="build/dmg-stage"
+RW="build/dmg-rw.dmg"
+MNT="build/dmg-mount"
+rm -rf "$STAGE" "$RW" "$DMG" "$MNT"
+mkdir -p "$STAGE/.background"
+cp -R "$APP" "$STAGE/"
+ln -s /Applications "$STAGE/Applications"
+cp Resources/dmg/background.tiff "$STAGE/.background/background.tiff"
+cp Resources/dmg/DS_Store "$STAGE/.DS_Store"
+cp "$APP/Contents/Resources/AppIcon.icns" "$STAGE/.VolumeIcon.icns"
+hdiutil create -quiet -volname "fstn view" -srcfolder "$STAGE" -fs HFS+ -format UDRW -ov "$RW"
+# Іконка самого диска (як у програми)
+mkdir -p "$MNT"
+hdiutil attach -quiet "$RW" -readwrite -noverify -noautoopen -nobrowse -mountpoint "$MNT"
+if command -v SetFile >/dev/null; then SetFile -a C "$MNT"; fi
+hdiutil detach -quiet "$MNT"
+hdiutil convert -quiet "$RW" -format UDZO -imagekey zlib-level=9 -o "$DMG"
+rm -rf "$STAGE" "$RW" "$MNT"
+
 echo "App: $(pwd)/$APP"
 echo "Zip: $(pwd)/$ZIP"
+echo "Dmg: $(pwd)/$DMG"
