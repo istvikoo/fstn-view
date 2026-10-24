@@ -60,6 +60,10 @@ final class ThumbnailStripView: NSVisualEffectView, NSCollectionViewDataSource {
     static let height: CGFloat = 104
 
     var onSelect: ((Int) -> Void)?
+    /// ⌘+клік — показати фото поруч для порівняння.
+    var onCompare: ((Int) -> Void)?
+    /// Друге фото в режимі порівняння (інша рамка).
+    private var compareIndex: Int?
     /// Чи смуга зараз виїхала на екран (керує вікно).
     var isOnScreen = false
 
@@ -109,6 +113,14 @@ final class ThumbnailStripView: NSVisualEffectView, NSCollectionViewDataSource {
         scrollToCurrent(animated: false)
     }
 
+    func setCompare(_ index: Int?) {
+        let old = compareIndex
+        compareIndex = index
+        for i in [old, index].compactMap({ $0 }) where files.indices.contains(i) {
+            (collectionView.item(at: IndexPath(item: i, section: 0)) as? ThumbnailItem)?.isCompare = (i == index)
+        }
+    }
+
     func setCurrent(_ index: Int) {
         let old = currentIndex
         currentIndex = index
@@ -156,7 +168,10 @@ final class ThumbnailStripView: NSVisualEffectView, NSCollectionViewDataSource {
         let item = collectionView.makeItem(withIdentifier: ThumbnailItem.identifier, for: indexPath) as! ThumbnailItem
         let index = indexPath.item
         item.configure(url: files[index], isCurrent: index == currentIndex)
-        item.onClick = { [weak self] in self?.onSelect?(index) }
+        item.isCompare = index == compareIndex
+        item.onClick = { [weak self] mods in
+            if mods.contains(.command) { self?.onCompare?(index) } else { self?.onSelect?(index) }
+        }
         return item
     }
 }
@@ -165,8 +180,12 @@ final class ThumbnailStripView: NSVisualEffectView, NSCollectionViewDataSource {
 private final class ThumbnailItem: NSCollectionViewItem {
     static let identifier = NSUserInterfaceItemIdentifier("ThumbnailItem")
 
-    var onClick: (() -> Void)?
+    var onClick: ((NSEvent.ModifierFlags) -> Void)?
     private var url: URL?
+
+    var isCompare = false {
+        didSet { thumbView?.isCompare = isCompare }
+    }
     private var loadOp: Operation?
 
     var isCurrent = false {
@@ -177,7 +196,7 @@ private final class ThumbnailItem: NSCollectionViewItem {
 
     override func loadView() {
         let v = ThumbView()
-        v.onClick = { [weak self] in self?.onClick?() }
+        v.onClick = { [weak self] mods in self?.onClick?(mods) }
         view = v
     }
 
@@ -208,7 +227,11 @@ private final class ThumbnailItem: NSCollectionViewItem {
 /// Мініатюра малюється напряму в шар Core Animation (як головне фото), а не через NSImageView:
 /// так картинка з'являється одразу, навіть якщо прийшла, поки смуга була схована.
 private final class ThumbView: NSView {
-    var onClick: (() -> Void)?
+    var onClick: ((NSEvent.ModifierFlags) -> Void)?
+
+    var isCompare = false {
+        didSet { updateBorder() }
+    }
     private let imageLayer = CALayer()
 
     var image: CGImage? {
@@ -254,12 +277,13 @@ private final class ThumbView: NSView {
     }
 
     private func updateBorder() {
-        layer?.borderColor = isCurrent ? NSColor.controlAccentColor.cgColor : NSColor.clear.cgColor
-        layer?.backgroundColor = isCurrent ? NSColor.white.withAlphaComponent(0.12).cgColor : NSColor.clear.cgColor
+        let border = isCurrent ? NSColor.controlAccentColor : isCompare ? NSColor.systemOrange : NSColor.clear
+        layer?.borderColor = border.cgColor
+        layer?.backgroundColor = isCurrent || isCompare ? NSColor.white.withAlphaComponent(0.12).cgColor : NSColor.clear.cgColor
     }
 
     override func mouseDown(with event: NSEvent) {}
-    override func mouseUp(with event: NSEvent) { onClick?() }
+    override func mouseUp(with event: NSEvent) { onClick?(event.modifierFlags) }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 

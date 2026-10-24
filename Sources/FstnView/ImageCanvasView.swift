@@ -9,6 +9,20 @@ final class ImageCanvasView: NSView {
     var onDropURL: ((URL) -> Void)?
     /// Меню на правий клік по фото.
     var onContextMenu: (() -> NSMenu?)?
+    /// Порівняння: клік або колесо над цією половиною. true — половина щойно стала активною,
+    /// тоді клік лише вибирає її і не змінює зум.
+    var onActivate: (() -> Bool)?
+    /// Зум або позиція змінились (для синхронізації другої половини).
+    var onViewChanged: (() -> Void)?
+    private var swallowClick = false
+
+    /// Рамка активної половини в режимі порівняння.
+    var isHighlighted = false {
+        didSet {
+            layer?.borderWidth = isHighlighted ? 2 : 0
+            layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.8).cgColor
+        }
+    }
 
     private let imageLayer = CALayer()
     private let hint = NSTextField(labelWithString: "")
@@ -61,6 +75,7 @@ final class ImageCanvasView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
+        layer?.masksToBounds = true          // у порівнянні збільшене фото не залазить на сусідню половину
         imageLayer.contentsGravity = .resize
         imageLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "frame": NSNull()]
         layer?.addSublayer(imageLayer)
@@ -156,6 +171,22 @@ final class ImageCanvasView: NSView {
         onZoomChanged?()
     }
 
+    /// Показати так само, як інша половина (nil — вписати). Без зворотних викликів.
+    func apply(_ state: ViewState?) {
+        guard hasImage else { return }
+        if let state, state.zoom > fitZoom + 0.0001 {
+            isFit = false
+            zoom = state.zoom
+            center = CGPoint(x: state.relativeCenter.x * viewSize.width, y: state.relativeCenter.y * viewSize.height)
+        } else {
+            isFit = true
+        }
+        let callback = onViewChanged
+        onViewChanged = nil
+        layoutImage()
+        onViewChanged = callback
+    }
+
     /// Підміна прев'ю на повну роздільність без зміни масштабу і позиції.
     func replaceImage(_ image: CGImage) {
         imageLayer.contents = image
@@ -243,6 +274,7 @@ final class ImageCanvasView: NSView {
         imageLayer.magnificationFilter = zoom >= 2 ? .nearest : .linear
         imageLayer.minificationFilter = .trilinear
         CATransaction.commit()
+        onViewChanged?()
     }
 
     override func layout() {
@@ -265,6 +297,11 @@ final class ImageCanvasView: NSView {
     // MARK: - Миша і трекпад
 
     override func mouseDown(with event: NSEvent) {
+        if onActivate?() == true {
+            swallowClick = true
+            window?.makeFirstResponder(self)
+            return
+        }
         window?.makeFirstResponder(self)
         lastDrag = event.locationInWindow
         mouseDownPoint = event.locationInWindow
@@ -282,7 +319,7 @@ final class ImageCanvasView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let last = lastDrag else { return }
+        guard !swallowClick, let last = lastDrag else { return }
         let p = event.locationInWindow
         // Невеликий зсув миші під час кліку не вважаємо перетягуванням
         if let start = mouseDownPoint, hypot(p.x - start.x, p.y - start.y) > 4 { didDrag = true }
@@ -295,6 +332,10 @@ final class ImageCanvasView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if swallowClick {
+            swallowClick = false
+            return
+        }
         if cursorPushed { NSCursor.pop(); cursorPushed = false }
         lastDrag = nil
         mouseDownPoint = nil
@@ -310,6 +351,7 @@ final class ImageCanvasView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        _ = onActivate?()
         let mods = event.modifierFlags.intersection([.command, .option, .control])
         let anchor = convert(event.locationInWindow, from: nil)
 

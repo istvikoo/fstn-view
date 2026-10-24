@@ -3,7 +3,13 @@ import SwiftUI
 
 final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     let state = ViewerState()
-    private let canvas = ImageCanvasView()
+    /// Область фото: одна половина або дві поруч (порівняння).
+    private let stage = SplitStageView()
+    /// Активна половина в режимі порівняння: 0 — ліва, 1 — права. Поза порівнянням — завжди ліва.
+    private var activeSide = 0
+    /// Половина, з якою працюють усі дії (гортання, оцінки, зум, A, Delete…).
+    private var canvas: ImageCanvasView { activeSide == 0 ? stage.left : stage.right }
+    private var passiveCanvas: ImageCanvasView { activeSide == 0 ? stage.right : stage.left }
     private var panel: NSView!
     private var panelTrailing: NSLayoutConstraint!
     private var canvasToEdge: NSLayoutConstraint!
@@ -94,28 +100,29 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         // Фото на всю ширину, панель — шаром поверх нього біля правого краю
         let container = HoverTrackingView()
         container.clipsToBounds = true
-        for v in [canvas, strip, blur] as [NSView] {
+        for v in [stage, strip, blur] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(v)
         }
         panelTrailing = blur.trailingAnchor.constraint(equalTo: container.trailingAnchor)
-        canvasToEdge = canvas.trailingAnchor.constraint(equalTo: container.trailingAnchor)
-        canvasToPanel = canvas.trailingAnchor.constraint(equalTo: blur.leadingAnchor)
+        canvasToEdge = stage.trailingAnchor.constraint(equalTo: container.trailingAnchor)
+        canvasToPanel = stage.trailingAnchor.constraint(equalTo: blur.leadingAnchor)
         stripBottom = strip.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: ThumbnailStripView.height)
         NSLayoutConstraint.activate([
-            canvas.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            canvas.topAnchor.constraint(equalTo: container.topAnchor),
-            canvas.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            stage.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stage.topAnchor.constraint(equalTo: container.topAnchor),
+            stage.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             blur.topAnchor.constraint(equalTo: container.topAnchor),
             blur.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             blur.widthAnchor.constraint(equalToConstant: Self.panelSize),
             panelTrailing,
             strip.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            strip.trailingAnchor.constraint(equalTo: canvas.trailingAnchor),
+            strip.trailingAnchor.constraint(equalTo: stage.trailingAnchor),
             strip.heightAnchor.constraint(equalToConstant: ThumbnailStripView.height),
             stripBottom,
         ])
         strip.onSelect = { [weak self] i in self?.goTo(index: i) }
+        strip.onCompare = { [weak self] i in self?.compare(with: i) }
         window.contentView = container
         container.onMouseMoved = { [weak self] point in self?.mouseMoved(to: point) }
         container.onMouseExited = { [weak self] in
@@ -127,11 +134,25 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         window.setFrameAutosaveName("FstnViewMain")
         if !window.setFrameUsingName("FstnViewMain") { window.center() }
 
-        canvas.onNavigate = { [weak self] step in self?.navigate(step) }
-        canvas.onZoomChanged = { [weak self] in self?.zoomChanged() }
-        canvas.onKeyDown = { [weak self] event in self?.handleKey(event) ?? false }
-        canvas.onDropURL = { [weak self] url in self?.open(url) }
-        canvas.onContextMenu = { [weak self] in self?.contextMenu() }
+        for c in [stage.left, stage.right] {
+            c.onNavigate = { [weak self] step in self?.navigate(step) }
+            c.onZoomChanged = { [weak self, unowned c] in
+                guard let self, c === self.canvas else { return }
+                self.zoomChanged()
+            }
+            c.onKeyDown = { [weak self] event in self?.handleKey(event) ?? false }
+            c.onDropURL = { [weak self] url in self?.open(url) }
+            c.onContextMenu = { [weak self, unowned c] in
+                guard let self else { return nil }
+                _ = self.activate(c)
+                return self.contextMenu()
+            }
+            c.onActivate = { [weak self, unowned c] in self?.activate(c) ?? false }
+            c.onViewChanged = { [weak self, unowned c] in
+                guard let self, c === self.canvas else { return }
+                self.syncPassive()
+            }
+        }
         showHint { L("Відкрийте зображення (⌘O) або перетягніть його сюди") }
         window.makeFirstResponder(canvas)
         NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: AppLanguage.changed, object: nil)
@@ -192,6 +213,125 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 }
             }
         }
+    }
+
+    // MARK: - Порівняння двох фото поруч (⌘+клік по мініатюрі)
+
+    private(set) var comparing = false
+    /// Фото в неактивній половині.
+    private var otherURL: URL?
+    /// Те, що показано в неактивній половині (прев'ю), і чи там зараз оригінал.
+    private var otherImage: LoadedImage?
+    private var otherShowsFull = false
+
+    /// ⌘+клік: показати фото праворуч від поточного. Повторно по іншому — замінити праве,
+    /// по тому, що вже в порівнянні, — закрити порівняння.
+    func compare(with target: Int) {
+        guard files.indices.contains(target) else { return }
+        let url = files[target]
+        if comparing {
+            if url == otherURL || url == files[index] {
+                exitCompare()
+                return
+            }
+            if activeSide == 0 { switchSide() }       // замінюємо саме праве фото
+            index = target
+            showCurrent(keepingView: canvas.viewState)
+            window?.makeFirstResponder(canvas)
+            return
+        }
+        guard target != index else { return }
+        let view = canvas.viewState
+        comparing = true
+        otherURL = files[index]
+        otherImage = current ?? otherURL.flatMap { loader.cached($0) }
+        otherShowsFull = showingFull && current != nil
+        stage.isSplit = true
+        activeSide = 1                                // нове фото праворуч і активне
+        stage.left.isHighlighted = false
+        stage.right.isHighlighted = true
+        index = target
+        showCurrent(keepingView: view)
+        window?.makeFirstResponder(canvas)
+    }
+
+    /// Клік або колесо над половиною. true — вона щойно стала активною.
+    private func activate(_ c: ImageCanvasView) -> Bool {
+        guard comparing, c !== canvas else { return false }
+        switchSide()
+        return true
+    }
+
+    /// Зробити активною іншу половину: її фото стає «поточним» для всіх дій.
+    private func switchSide() {
+        guard comparing, let other = otherURL, let i = files.firstIndex(of: other) else {
+            exitCompare()
+            return
+        }
+        otherURL = files.indices.contains(index) ? files[index] : nil
+        otherImage = current ?? otherURL.flatMap { loader.cached($0) }
+        otherShowsFull = showingFull && current != nil
+        activeSide = 1 - activeSide
+        stage.left.isHighlighted = activeSide == 0
+        stage.right.isHighlighted = activeSide == 1
+        index = i
+        showCurrent(keepingView: canvas.viewState)
+        window?.makeFirstResponder(canvas)
+    }
+
+    /// Esc або ⌘+клік по фото з порівняння: назад до одного фото (активного).
+    func exitCompare() {
+        guard comparing else { return }
+        let view = canvas.viewState
+        comparing = false
+        otherURL = nil
+        otherImage = nil
+        stage.left.isHighlighted = false
+        stage.right.isHighlighted = false
+        let wasRight = activeSide == 1
+        activeSide = 0
+        stage.isSplit = false
+        strip.setCompare(nil)
+        if wasRight {
+            showCurrent(keepingView: view)
+        } else {
+            updatePosition()
+        }
+        stage.right.showHint("")
+        window?.makeFirstResponder(canvas)
+    }
+
+    /// Неактивна половина повторює зум і позицію активної; якщо збільшено — показує оригінал.
+    private func syncPassive() {
+        guard comparing, let other = otherImage, otherImage?.url == otherURL else { return }
+        let passive = passiveCanvas
+        passive.apply(canvas.viewState)
+        let needed = passive.zoom * max(other.displaySize.width, other.displaySize.height)
+        let have = CGFloat(max(other.preview.width, other.preview.height))
+        if needed > have * 1.02 {
+            guard !otherShowsFull else { return }
+            otherShowsFull = true
+            let url = other.url
+            loader.loadFull(url, slot: 1) { [weak self] image in
+                guard let self, let image, self.otherURL == url, self.otherShowsFull else { return }
+                self.passiveCanvas.replaceImage(image)
+            }
+        } else if otherShowsFull {
+            otherShowsFull = false
+            passive.replaceImage(other.preview)
+        }
+        updatePassiveOverlay()
+    }
+
+    /// Короткий рядок неактивної половини: ім'я, зірки, мітка, масштаб.
+    private func updatePassiveOverlay() {
+        guard comparing, let url = otherURL else { return }
+        var parts = [url.lastPathComponent]
+        let mark = marks[url]
+        if let mark, mark.rating > 0 { parts.append(mark.stars) }
+        if passiveCanvas.hasImage { parts.append("\(Int((passiveCanvas.zoom * 100).rounded()))%") }
+        passiveCanvas.setOverlayText(parts.joined(separator: "  "), dot: mark?.label?.color)
+        if mark == nil { loadMark(for: url) }
     }
 
     // MARK: - Пари RAW+JPEG
@@ -389,6 +529,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private func updatePosition() {
         state.position = files.isEmpty ? "" : "\(index + 1) / \(files.count)"
         strip.setCurrent(index)
+        strip.setCompare(comparing ? otherURL.flatMap { files.firstIndex(of: $0) } : nil)
         updateOverlay()
     }
 
@@ -427,6 +568,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         }
         canvas.setOverlayText(parts.joined(separator: "  "), dot: mark?.label?.color)
         if mark == nil { loadMark(for: here) }
+        updatePassiveOverlay()
     }
 
     private func preloadNeighbors() {
@@ -525,7 +667,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             DispatchQueue.main.async {
                 guard let self, self.marks[url] == nil else { return }
                 self.marks[url] = mark
-                if self.files.indices.contains(self.index), self.files[self.index] == url { self.updateOverlay() }
+                if self.files.indices.contains(self.index), self.files[self.index] == url || self.otherURL == url { self.updateOverlay() }
             }
         }
     }
@@ -705,6 +847,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         }
         let currentURL = files.indices.contains(index) ? files[index] : nil
         let before = files.prefix(index).filter { removed.contains($0) }.count
+        if comparing, let other = otherURL, removed.contains(other) { exitCompare() }
         allFiles.removeAll { removed.contains($0) }
         if files.isEmpty {
             current = nil
@@ -1210,10 +1353,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         case 115: goTo(first: true)                     // Home
         case 119: goTo(first: false)                    // End
         case 36, 76, 3: toggleFullScreen()              // Enter, F
+        case 53 where comparing:                        // Esc у порівнянні — закрити порівняння
+            exitCompare()
         case 53:                                        // Esc — повністю закрити програму
             NSApp.terminate(nil)
         case 34, 48: togglePanel()                      // I, Tab
-        case 17: canvas.isOverlayEnabled.toggle()       // T — рядок зверху
+        case 17:                                        // T — рядок зверху
+            let on = !canvas.isOverlayEnabled
+            stage.left.isOverlayEnabled = on
+            stage.right.isOverlayEnabled = on
         case 0: toggleRawDevelop()                      // A — проявити RAW
         case 37: rotate(by: -1)                         // L — повернути проти годинникової
         case 15: rotate(by: 1)                          // R — повернути за годинниковою

@@ -125,7 +125,8 @@ final class ImageLoader {
         var callbacks: [(CGImage?) -> Void]
     }
 
-    private var fullPending: FullPending?
+    /// Запит оригіналу для кожного «слота»: 0 — головне фото, 1 — друге фото в режимі порівняння.
+    private var fullPendings: [Int: FullPending] = [:]
 
     // MARK: - Прев'ю (викликати з головного потоку)
 
@@ -312,16 +313,16 @@ final class ImageLoader {
 
     /// Оригінал для зуму. completion = nil — просто завантажити наперед.
     /// Повторний запит того ж файлу, поки він ще вантажиться, не запускає декодування вдруге.
-    func loadFull(_ url: URL, completion: ((CGImage?) -> Void)?) {
+    func loadFull(_ url: URL, slot: Int = 0, completion: ((CGImage?) -> Void)?) {
         if let hit = fullCache.object(forKey: url as NSURL) {
             completion?(hit)
             return
         }
-        if let p = fullPending, p.url == url {
-            if let completion { fullPending?.callbacks.append(completion) }
+        if let p = fullPendings[slot], p.url == url {
+            if let completion { fullPendings[slot]?.callbacks.append(completion) }
             return
         }
-        fullPending?.op.cancel()
+        fullPendings[slot]?.op.cancel()
 
         let token = UUID()
         let op = BlockOperation()
@@ -332,12 +333,12 @@ final class ImageLoader {
                 if let image {
                     self.fullCache.setObject(image, forKey: url as NSURL, cost: image.bytesPerRow * image.height)
                 }
-                guard let p = self.fullPending, p.token == token else { return }
-                self.fullPending = nil
+                guard let p = self.fullPendings[slot], p.token == token else { return }
+                self.fullPendings[slot] = nil
                 p.callbacks.forEach { $0(image) }
             }
         }
-        fullPending = FullPending(url: url, token: token, op: op, callbacks: completion.map { [$0] } ?? [])
+        fullPendings[slot] = FullPending(url: url, token: token, op: op, callbacks: completion.map { [$0] } ?? [])
         fullQueue.addOperation(op)
     }
 
