@@ -246,6 +246,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         otherURL = files[index]
         otherImage = current ?? otherURL.flatMap { loader.cached($0) }
         otherShowsFull = showingFull && current != nil
+        updateCompareLayout()
         stage.isSplit = true
         activeSide = 1                                // нове фото праворуч і активне
         stage.left.isHighlighted = false
@@ -291,6 +292,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let wasRight = activeSide == 1
         activeSide = 0
         stage.isSplit = false
+        stage.isStacked = false
         strip.setCompare(nil)
         if wasRight {
             showCurrent(keepingView: view)
@@ -321,6 +323,60 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             passive.replaceImage(other.preview)
         }
         updatePassiveOverlay()
+    }
+
+    /// Розкладка порівняння: авто (де фото більші), поруч або одне над одним.
+    enum CompareLayout: Int { case auto = 0, sideBySide, stacked }
+    private static let compareLayoutKey = "compareLayout"
+
+    var compareLayout: CompareLayout {
+        get { CompareLayout(rawValue: UserDefaults.standard.integer(forKey: Self.compareLayoutKey)) ?? .auto }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: Self.compareLayoutKey)
+            updateCompareLayout()
+            if comparing { flash(compareLayoutTitle) }
+        }
+    }
+
+    var compareLayoutTitle: String {
+        switch compareLayout {
+        case .auto: return L("Порівняння: авто (%@)", stage.isStacked ? L("одне над одним") : L("поруч"))
+        case .sideBySide: return L("Порівняння: поруч")
+        case .stacked: return L("Порівняння: одне над одним")
+        }
+    }
+
+    /// \\ — авто → поруч → одне над одним → авто.
+    func cycleCompareLayout() {
+        compareLayout = CompareLayout(rawValue: (compareLayout.rawValue + 1) % 3) ?? .auto
+    }
+
+    /// Ставить розкладку половин. В «авто» — ту, де обидва фото разом займають більше місця:
+    /// вертикальні — поруч, горизонтальні — одне над одним.
+    private func updateCompareLayout() {
+        guard comparing else { return }
+        let stacked: Bool
+        switch compareLayout {
+        case .sideBySide: stacked = false
+        case .stacked: stacked = true
+        case .auto:
+            func size(_ image: LoadedImage?) -> CGSize? {
+                guard let image else { return nil }
+                let s = image.displaySize
+                return (rotations[image.url] ?? 0) % 2 == 1 ? CGSize(width: s.height, height: s.width) : s
+            }
+            let sizes = [size(current), size(otherImage)].compactMap { $0 }.filter { $0.width > 0 && $0.height > 0 }
+            guard !sizes.isEmpty else { return }
+            func area(_ stacked: Bool) -> CGFloat {
+                let cell = stage.cellSize(stacked: stacked)
+                return sizes.reduce(0) { sum, s in
+                    let k = min(cell.width / s.width, cell.height / s.height)
+                    return sum + s.width * s.height * k * k
+                }
+            }
+            stacked = area(true) > area(false) * 1.05
+        }
+        stage.isStacked = stacked
     }
 
     /// Короткий рядок неактивної половини: ім'я, зірки, мітка, масштаб.
@@ -480,6 +536,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         }
         state.fileName = image.info.url.lastPathComponent
         state.info = infoWithPair(image.info, for: image.url)
+        updateCompareLayout()
         state.histogram = image.histogram
         let ms = Int((image.decodeTime * 1000).rounded())
         hintMaker = nil
@@ -1098,6 +1155,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         item(L("Скопіювати в «%@» (C)", sortFolderName)) { [weak self] in self?.sendCurrent(.copy) }
         item(L("Перемістити позначені…")) { [weak self] in self?.sendMarked() }
         menu.addItem(.separator())
+        if comparing {
+            item(L("Розкладка порівняння (\\): %@", compareLayoutTitle)) { [weak self] in self?.cycleCompareLayout() }
+            item(L("Закрити порівняння (Esc)")) { [weak self] in self?.exitCompare() }
+            menu.addItem(.separator())
+        }
         item(L("Копіювати файл"), "c", .command) { [weak self] in self?.copyFileToPasteboard() }
         item(L("Копіювати як картинку"), "c", [.command, .option]) { [weak self] in self?.copyToPasteboard() }
         menu.addItem(.separator())
@@ -1190,6 +1252,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let value = (((rotations[url] ?? 0) + step) % 4 + 4) % 4
         rotations[url] = value
         canvas.setRotation(value)
+        updateCompareLayout()
     }
 
     /// ⌘R: показати поточний файл у Finder.
@@ -1366,6 +1429,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         case 37: rotate(by: -1)                         // L — повернути проти годинникової
         case 15: rotate(by: 1)                          // R — повернути за годинниковою
         case 14: openInExternalEditor()                 // E — відкрити в іншій програмі
+        case 42 where comparing: cycleCompareLayout()   // \\ — розкладка порівняння
         case 46: sendCurrent(.move)                     // M — перемістити у «Відсортовано»
         case 8: sendCurrent(.copy)                      // C — скопіювати у «Відсортовано»
         case 6: toggleActualSize()                      // Z

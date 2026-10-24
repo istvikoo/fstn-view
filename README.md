@@ -13,7 +13,7 @@ almost instantly and shows an info panel with EXIF data and a histogram.
 - **Info line** in the top-left corner: file name, dimensions, megapixels, file size, position in folder and zoom (like FastStone).
 - **Zoom.** Click to toggle 100% at the clicked point. Press and hold to zoom only while the button is down, and drag to look around.
 - **Compare photos zoomed in.** Hold the mouse button and switch photos with the wheel or arrow keys: each photo opens at the same zoom and the same spot, so you can compare focus or expression across a series. Release the button to fit again. After `Z` (100%), the arrow keys also keep the zoom until you click or press `0`.
-- **Compare two photos side by side.** `⌘`-click a thumbnail in the strip to open it to the right of the current photo. The half with a frame is active: arrow keys, ratings, `M`, `Delete` and the other keys act on it; click the other half to switch. Zoom and panning are synced, so holding the mouse button shows both photos at 100% on the same spot. `⌘`-click another thumbnail to replace the right photo; `Esc` closes the comparison.
+- **Compare two photos side by side.** `⌘`-click a thumbnail in the strip to open it to the right of the current photo. The half with a frame is active: arrow keys, ratings, `M`, `Delete` and the other keys act on it; click the other half to switch. Zoom and panning are synced, so holding the mouse button shows both photos at 100% on the same spot. `⌘`-click another thumbnail to replace the right photo; `Esc` closes the comparison. `\\` switches the layout: *Auto* (whichever shows both photos larger: usually side by side, one above the other for wide photos or a narrow window), *Side by Side* or *One Above the Other*; also in *View → Compare Layout*.
 - **Develop RAW on demand.** RAW files are shown from their embedded JPEG for speed. Press `A` to develop the current RAW file with the macOS RAW engine (about 0.5 s); 100% zoom then shows the developed image too. Press `A` again to go back. Some cameras (for example Sony ARW) embed only a small preview, so it looks softer full screen until you press `A`.
 - **RAW+JPEG pairs as one photo.** When a folder has `IMG_0001.JPG` and `IMG_0001.CR3`, only the JPEG is shown and the counter counts photos, not files; the line says `[ JPEG+RAW ]`. Press `A` to develop the paired RAW, and `A` again to go back to the JPEG. `E`, `⌘C` and `⌘R` use the file on screen. Turn it off with *View → Group RAW+JPEG Pairs*.
 - **Ratings and color labels.** Press `1`–`5` for stars and `6`–`9` for a red, yellow, green or blue label (press the same key again to clear it). They are saved as standard XMP, so Lightroom, Bridge and Capture One see them: RAW files get a sidecar `IMG_0001.xmp` (an existing Lightroom sidecar is only updated), JPEGs get it inside the file. Only the XMP block is rewritten; the picture and the camera EXIF stay byte for byte the same. RAW+JPEG pairs are rated together.
@@ -66,6 +66,7 @@ Requires macOS 14 Sonoma or later.
 | Copy file / copy as image | `⌘C` / `⌥⌘C` |
 | Leave or enter full screen | `F` or `Enter` |
 | Compare with a thumbnail side by side | `⌘`-click in the strip |
+| Compare layout: auto / side by side / one above the other | `\\` |
 | Close comparison / quit | `Esc` |
 | Open file or folder | `⌘O` |
 | All actions in one menu | Right-click the photo |

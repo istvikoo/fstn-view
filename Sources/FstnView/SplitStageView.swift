@@ -15,6 +15,21 @@ final class SplitStageView: NSView {
         }
     }
 
+    /// Одне над одним (ліва половина — зверху) замість поруч.
+    var isStacked = false {
+        didSet {
+            guard isStacked != oldValue else { return }
+            needsLayout = true
+            layoutSubtreeIfNeeded()
+        }
+    }
+
+    /// Розмір однієї половини для розкладки (щоб вибрати ту, де фото більші).
+    func cellSize(stacked: Bool) -> CGSize {
+        stacked ? CGSize(width: bounds.width, height: (bounds.height - Self.gap) / 2)
+                : CGSize(width: (bounds.width - Self.gap) / 2, height: bounds.height)
+    }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -30,6 +45,12 @@ final class SplitStageView: NSView {
         super.layout()
         guard isSplit else {
             left.frame = bounds
+            return
+        }
+        if isStacked {
+            let h = ((bounds.height - Self.gap) / 2).rounded(.down)
+            left.frame = NSRect(x: 0, y: bounds.height - h, width: bounds.width, height: h)
+            right.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - h - Self.gap)
             return
         }
         let w = ((bounds.width - Self.gap) / 2).rounded(.down)

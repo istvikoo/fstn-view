@@ -67,6 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func copyFile(_ sender: Any?) { viewer().copyFileToPasteboard() }
     @objc func openInEditor(_ sender: Any?) { viewer().openInExternalEditor() }
     @objc func chooseEditor(_ sender: Any?) { viewer().chooseExternalEditor() }
+    @objc func setCompareLayout(_ sender: NSMenuItem) {
+        viewer().compareLayout = ViewerWindowController.CompareLayout(rawValue: sender.tag) ?? .auto
+    }
     @objc func moveToSorted(_ sender: Any?) { viewer().sendCurrent(.move) }
     @objc func copyToSorted(_ sender: Any?) { viewer().sendCurrent(.copy) }
     @objc func moveMarked(_ sender: Any?) { viewer().sendMarked() }
@@ -96,6 +99,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         if menuItem.action == #selector(toggleGroupPairs(_:)) {
             menuItem.state = (controller?.groupsPairs ?? true) ? .on : .off
+        }
+        if menuItem.action == #selector(setCompareLayout(_:)) {
+            menuItem.state = controller?.compareLayout.rawValue == menuItem.tag ? .on : .off
         }
         if menuItem.action == #selector(openInEditor(_:)) {
             let name = controller?.externalEditorName
@@ -169,6 +175,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             m.addItem(.separator())
             add(m, L("Проявити RAW / вбудований JPEG (A)"), #selector(toggleRawDevelop(_:)))
             add(m, L("Обʼєднувати пари RAW+JPEG"), #selector(toggleGroupPairs(_:)))
+            m.addItem(.separator())
+            let layouts = NSMenu()
+            for (tag, title) in [L("Авто"), L("Поруч"), L("Одне над одним")].enumerated() {
+                let i = NSMenuItem(title: title, action: #selector(setCompareLayout(_:)), keyEquivalent: "")
+                i.tag = tag
+                i.target = self
+                layouts.addItem(i)
+            }
+            let layoutItem = NSMenuItem(title: L("Розкладка порівняння (\\)"), action: nil, keyEquivalent: "")
+            layoutItem.submenu = layouts
+            m.addItem(layoutItem)
             add(m, L("Повернути ліворуч (L)"), #selector(rotateLeft(_:)))
             add(m, L("Повернути праворуч (R)"), #selector(rotateRight(_:)))
             m.addItem(.separator())
