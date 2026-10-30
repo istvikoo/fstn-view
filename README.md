@@ -4,6 +4,8 @@ A fast, minimal image viewer for macOS, inspired by FastStone Image Viewer.
 Opens JPEG, HEIC, PNG, WebP, AVIF, TIFF and camera RAW files (CR3, CR2, NEF, ARW, DNG, RAF and more)
 almost instantly and shows an info panel with EXIF data and a histogram.
 
+![fstn view: full-screen photo with the info line, info panel and thumbnail strip](docs/screenshot.jpg)
+
 ## Features
 
 - **Fast opening.** A lower-resolution preview appears in about 35 ms and is replaced by the sharp image a moment later. Images are decoded straight to screen size, and for RAW files the embedded full-size JPEG preview is used.
