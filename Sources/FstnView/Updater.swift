@@ -100,7 +100,20 @@ final class Updater {
 
     // MARK: - Встановлення
 
+    /// Програму запущено звідки її не можна замінити: прямо з DMG або з тимчасової копії,
+    /// яку macOS робить для програм поза «Програмами» (App Translocation).
+    private static var canReplaceSelf: Bool {
+        let app = Bundle.main.bundleURL
+        if app.path.contains("/AppTranslocation/") { return false }
+        if let readOnly = try? app.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly, readOnly { return false }
+        return FileManager.default.isWritableFile(atPath: app.deletingLastPathComponent().path)
+    }
+
     private func install(from url: URL) {
+        guard Self.canReplaceSelf else {
+            showError(L("Програму запущено не з папки «Програми» (напр. прямо з DMG), тому її не можна замінити. Перетягніть %@ у «Програми», запустіть звідти і спробуйте ще раз.", AppInfo.name))
+            return
+        }
         isBusy = true
         URLSession.shared.downloadTask(with: url) { [weak self] file, _, error in
             var result: Result<URL, Error>

@@ -64,6 +64,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     /// Поворот кожного фото на екрані (L / R), поки програма відкрита.
     private var rotations: [URL: Int] = [:]
     private var listingToken = UUID()
+    /// Папка, яку зараз переглядаємо (навіть якщо в ній немає фото).
+    private var openedFolder: URL?
     /// Оцінки й мітки кадрів (прочитані з XMP), щоб не читати файл щоразу.
     private var marks: [URL: PhotoMark] = [:]
     private let markQueue = DispatchQueue(label: "fstn.marks", qos: .userInitiated)
@@ -196,6 +198,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let isFolder = isDir.boolValue
         let folder = isFolder ? url : url.deletingLastPathComponent()
         if comparing { exitCompare() }
+        openedFolder = folder.standardizedFileURL
         marks = [:]                 // оцінки могли змінити в іншій програмі — читаємо заново
         // Дерево папок читає диск — оновлюємо його вже після того, як фото з'явилось
         DispatchQueue.main.async { [weak self] in self?.folderPanel.setCurrentFolder(folder) }
@@ -278,6 +281,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         otherURL = files[index]
         otherImage = current ?? otherURL.flatMap { loader.cached($0) }
         otherShowsFull = showingFull && current != nil
+        loadOtherIfNeeded()
         updateCompareLayout()
         stage.isSplit = true
         activeSide = 1                                // нове фото праворуч і активне
@@ -304,6 +308,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         otherURL = files.indices.contains(index) ? files[index] : nil
         otherImage = current ?? otherURL.flatMap { loader.cached($0) }
         otherShowsFull = showingFull && current != nil
+        loadOtherIfNeeded()
         activeSide = 1 - activeSide
         stage.left.isHighlighted = activeSide == 0
         stage.right.isHighlighted = activeSide == 1
@@ -333,6 +338,21 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         }
         stage.right.showHint("")
         window?.makeFirstResponder(canvas)
+    }
+
+    /// Друге фото ще не дочиталось (на ньому було швидке прев'ю) — довантажуємо, щоб половини йшли разом.
+    private func loadOtherIfNeeded() {
+        guard otherImage == nil, let url = otherURL else { return }
+        loader.load(url, priority: .veryHigh) { [weak self] image in
+            guard let self, let image, self.comparing, self.otherURL == url, self.otherImage == nil else { return }
+            self.otherImage = image
+            self.otherShowsFull = false
+            let passive = self.passiveCanvas
+            passive.setRotation(self.rotations[url] ?? 0)
+            passive.setImage(image.preview, size: image.displaySize, resetView: true)
+            self.updateCompareLayout()
+            self.syncPassive()
+        }
     }
 
     /// Неактивна половина повторює зум і позицію активної; якщо збільшено — показує оригінал.
@@ -978,8 +998,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         foldersChanged(group.map { $0.movedTo.deletingLastPathComponent() } + [first.deletingLastPathComponent()])
         // Повертаємо у список, якщо переглядаємо ту саму папку
         let folder = first.deletingLastPathComponent().standardizedFileURL.path
-        let currentFolder = files.first?.deletingLastPathComponent().standardizedFileURL.path
-        if currentFolder == nil || currentFolder == folder {
+        if openedFolder?.path == folder {
             var list = allFiles
             for u in restored where u.pathExtension.lowercased() != "xmp" {
                 let name = u.lastPathComponent

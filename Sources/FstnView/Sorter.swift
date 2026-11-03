@@ -12,8 +12,22 @@ enum Sorter {
         set { UserDefaults.standard.set(newValue?.path, forKey: folderKey) }
     }
 
+    /// Назви підпапки обома мовами інтерфейсу.
+    private static let defaultNames = ["Відсортовано", "Sorted"]
+
     static func destination(for photo: URL) -> URL {
-        customFolder ?? photo.deletingLastPathComponent().appendingPathComponent(L("Відсортовано"), isDirectory: true)
+        let here = photo.deletingLastPathComponent()
+        // Обрана папка — та сама, де фото: переносити нема куди, беремо підпапку
+        if let custom = customFolder, custom.standardizedFileURL.path != here.standardizedFileURL.path {
+            return custom
+        }
+        // Уже є підпапка, створена іншою мовою інтерфейсу, — складаємо туди ж, а не в нову
+        for name in [L("Відсортовано")] + defaultNames {
+            let url = here.appendingPathComponent(name, isDirectory: true)
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue { return url }
+        }
+        return here.appendingPathComponent(L("Відсортовано"), isDirectory: true)
     }
 
     /// Переносить групу файлів одного кадру (фото, його пара, .xmp) в `folder`.

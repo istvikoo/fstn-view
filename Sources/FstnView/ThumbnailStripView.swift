@@ -7,7 +7,7 @@ final class ThumbnailCache {
 
     private let cache: NSCache<NSURL, CGImage> = {
         let c = NSCache<NSURL, CGImage>()
-        c.countLimit = 3000
+        c.totalCostLimit = 150 * 1024 * 1024     // ≈ 900 мініатюр; старіші перечитаються за потреби
         return c
     }()
 
@@ -35,7 +35,7 @@ final class ThumbnailCache {
             guard op?.isCancelled == false else { return }
             let image = Self.decode(url)
             DispatchQueue.main.async {
-                if let image { self?.cache.setObject(image, forKey: url as NSURL) }
+                if let image { self?.cache.setObject(image, forKey: url as NSURL, cost: image.bytesPerRow * image.height) }
                 if op?.isCancelled == false { completion(image) }
             }
         }
