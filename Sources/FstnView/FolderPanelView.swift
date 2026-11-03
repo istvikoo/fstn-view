@@ -200,6 +200,10 @@ final class FolderPanelView: NSVisualEffectView, NSOutlineViewDataSource, NSOutl
             outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             outline.scrollRowToVisible(row)
         }
+        // Відкрили фото в захищеній папці — тепер можна порахувати і її сусідів, які вже на екрані
+        for r in 0..<outline.numberOfRows {
+            if let n = outline.item(atRow: r) as? FolderNode, counts[n.url] == nil, mayRead(n.url) { count(n.url) }
+        }
     }
 
     /// Папку змінили (з'явилась «Відсортовано», перенесли фото) — оновити її підпапки й кількість.
@@ -285,8 +289,29 @@ final class FolderPanelView: NSVisualEffectView, NSOutlineViewDataSource, NSOutl
         let cell = outlineView.makeView(withIdentifier: id, owner: nil) as? FolderCell ?? FolderCell(identifier: id)
         let symbol = n.isVolume ? "externaldrive" : "folder"
         cell.configure(title: n.title, symbol: symbol, count: counts[n.url])
-        if counts[n.url] == nil { count(n.url) }
+        if counts[n.url] == nil, mayRead(n.url) { count(n.url) }
         return cell
+    }
+
+    /// Папки, доступ до яких macOS дає лише з дозволу користувача (Робочий стіл, Документи,
+    /// Завантаження, iCloud Drive, зовнішні диски). Сама панель їх не читає, щоб не викликати
+    /// запит «хоче отримати доступ» — лише коли там уже відкривали фото (дозвіл тоді вже є).
+    private static let protectedRoots: [URL] = {
+        let fm = FileManager.default
+        var roots = [FileManager.SearchPathDirectory.desktopDirectory, .documentDirectory, .downloadsDirectory]
+            .compactMap { fm.urls(for: $0, in: .userDomainMask).first }
+        roots.append(fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Mobile Documents"))
+        roots.append(URL(fileURLWithPath: "/Volumes"))
+        return roots.map(\.standardizedFileURL)
+    }()
+
+    private func mayRead(_ url: URL) -> Bool {
+        guard let root = Self.protectedRoots.first(where: { url.isInside($0) }) else { return true }
+        // Відкривали фото в цій захищеній області — дозвіл уже дано
+        let area = root.path == "/Volumes"
+            ? URL(fileURLWithPath: "/Volumes").appendingPathComponent(url.pathComponents.dropFirst(2).first ?? "")
+            : root
+        return current?.isInside(area) == true
     }
 
     /// Рахує фото в папці у фоні й оновлює рядок.
