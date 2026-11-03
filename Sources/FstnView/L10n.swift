@@ -116,7 +116,7 @@ private let english: [String: String] = [
     "Зменшити (−)": "Zoom Out (−)",
     "Повний екран (F / Enter)": "Full Screen (F / Enter)",
     "Перехід": "Go",
-    "Наступне (→ / Пробіл)": "Next (→ / Space)",
+    "Наступне (→)": "Next (→)",
     "Попереднє (←)": "Previous (←)",
     "Перше (Home)": "First (Home)",
     "Останнє (End)": "Last (End)",

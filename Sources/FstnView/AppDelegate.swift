@@ -205,7 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
 
         _ = submenu(L("Перехід")) { m in
-            add(m, L("Наступне (→ / Пробіл)"), #selector(nextImage(_:)), "]")
+            add(m, L("Наступне (→)"), #selector(nextImage(_:)), "]")
             add(m, L("Попереднє (←)"), #selector(previousImage(_:)), "[")
             m.addItem(.separator())
             add(m, L("Перше (Home)"), #selector(firstImage(_:)), "")

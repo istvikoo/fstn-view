@@ -1514,13 +1514,12 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private func handleKey(_ event: NSEvent) -> Bool {
         let mods = event.modifierFlags.intersection([.command, .control, .option])
         guard mods.isEmpty else { return false }
-        let shift = event.modifierFlags.contains(.shift)
 
         switch event.keyCode {
         case 124, 125, 121: navigate(1)                 // → ↓ PageDown
         case 123, 126, 116: navigate(-1)                // ← ↑ PageUp
         case 51, 117: deleteCurrent()                   // Backspace / Delete — у Кошик
-        case 49: navigate(shift ? -1 : 1)               // Пробіл / Shift+Пробіл
+        case 49: toggleActualSize()                     // Пробіл — як Z: вписати ↔ 100%
         case 115: goTo(first: true)                     // Home
         case 119: goTo(first: false)                    // End
         case 36, 76, 3: toggleFullScreen()              // Enter, F
@@ -1541,7 +1540,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         case 42 where comparing: cycleCompareLayout()   // \\ — розкладка порівняння
         case 46: sendCurrent(.move)                     // M — перемістити у «Відсортовано»
         case 8: sendCurrent(.copy)                      // C — скопіювати у «Відсортовано»
-        case 6: toggleActualSize()                      // Z
+        case 6: toggleActualSize()                      // Z (і Пробіл)
         case 18, 83: setRating(1)                       // 1–5 — зірки (і на цифровому блоці)
         case 19, 84: setRating(2)
         case 20, 85: setRating(3)
