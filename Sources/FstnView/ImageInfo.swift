@@ -132,6 +132,14 @@ struct ImageInfo {
         return sections
     }
 
+    /// Усі дані панелі текстом — для кнопки «Копіювати»:
+    /// «ФАЙЛ / Ім'я: IMG.CR3 / … ЗЙОМКА / ISO: 400 …».
+    var plainText: String {
+        sections.map { section in
+            ([section.title.uppercased()] + section.rows.map { "\($0.label): \($0.value)" }).joined(separator: "\n")
+        }.joined(separator: "\n\n")
+    }
+
     // MARK: - Допоміжне
 
     private static let programs = [0: "Не визначено", 1: "Ручний (M)", 2: "Програмний (P)", 3: "Пріоритет діафрагми (A)",

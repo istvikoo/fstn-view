@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 final class ViewerState: ObservableObject {
     @Published var fileName = ""
@@ -7,6 +8,8 @@ final class ViewerState: ObservableObject {
     @Published var decodeText = ""
     @Published var info: ImageInfo?
     @Published var histogram: Histogram?
+    /// Кнопку «Копіювати всі дані» щойно натиснули — на мить показуємо галочку.
+    @Published var infoCopied = false
 }
 
 /// Інформаційна бокова панель: гістограма + EXIF, як у FastStone.
@@ -16,10 +19,16 @@ struct InfoPanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(state.fileName.isEmpty ? L("Немає зображення") : state.fileName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .lineLimit(2)
-                    .truncationMode(.middle)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(state.fileName.isEmpty ? L("Немає зображення") : state.fileName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    if let info = state.info {
+                        CopyInfoButton(state: state, text: info.plainText)
+                    }
+                }
                 HStack {
                     Text(state.position)
                     Spacer()
@@ -55,6 +64,30 @@ struct InfoPanelView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+/// Маленька кнопка «скопіювати всі дані»: після натискання на мить показує галочку.
+private struct CopyInfoButton: View {
+    @ObservedObject var state: ViewerState
+    let text: String
+    private var copied: Bool { state.infoCopied }
+
+    var body: some View {
+        Button {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            state.infoCopied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [state] in state.infoCopied = false }
+        } label: {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 11))
+                .frame(width: 16, height: 14)
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(copied ? .green : .secondary)
+        .help(L("Копіювати всі дані"))
     }
 }
 
