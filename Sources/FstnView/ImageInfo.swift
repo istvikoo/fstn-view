@@ -106,7 +106,8 @@ struct ImageInfo {
         }
         section("Зйомка", [
             ("Дата", taken.map { Self.exifIn.date(from: $0).map { Self.dateOut.string(from: $0) } ?? $0 }),
-            ("Витримка", Self.doubleValue(exif[kCGImagePropertyExifExposureTime]).map(Self.shutter)),
+            // Витримка 0 (буває в зіпсованому EXIF) — не показуємо: 1/0 = ∞ і Int(∞) аварійно завершує програму
+            ("Витримка", Self.doubleValue(exif[kCGImagePropertyExifExposureTime]).flatMap { $0 > 0 ? Self.shutter($0) : nil }),
             ("Діафрагма", Self.doubleValue(exif[kCGImagePropertyExifFNumber]).map { "f/\(Self.trim($0))" }),
             ("ISO", Self.iso(exif).map { "\($0)" }),
             ("Фокусна", focal),

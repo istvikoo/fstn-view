@@ -332,6 +332,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         stage.isStacked = false
         strip.setCompare(nil)
         if wasRight {
+            // Ліва половина ще показує інше фото (зі своїм поворотом) — показуємо це фото в ній заново,
+            // а не як «те саме фото», інакше лишиться чужий поворот
+            current = nil
+            quickShownFor = nil
             showCurrent(keepingView: view)
         } else {
             updatePosition()
@@ -683,6 +687,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let urls = offsets.map { index + $0 }.filter { files.indices.contains($0) }.map { files[$0] }
         var keep = Set(urls)
         if files.indices.contains(index) { keep.insert(files[index]) }
+        // Фото другої половини порівняння ще може вантажитись — його не скасовуємо
+        if comparing, let other = otherURL { keep.insert(other) }
         loader.cancelPending(keeping: keep)
         for (i, url) in urls.enumerated() {
             loader.load(url, priority: i == 0 ? .high : .normal, completion: nil)
@@ -940,9 +946,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 guard let self else { return }
                 let moved = group.compactMap { original in trashed[original].map { (original: original, movedTo: $0) } }
                 if !moved.isEmpty { self.undoStack.append(moved) }
-                if let error, moved.isEmpty {
+                if let error {
+                    // Частину файлів кадру (напр. RAW з пари) не вдалося перемістити — теж повідомляємо
                     self.showError(L("Не вдалося перемістити «%@» у Кошик", url.lastPathComponent), error)
-                    return
+                    if moved.isEmpty { return }
                 }
                 self.removeFromList(Set(moved.map { $0.original }))
             }

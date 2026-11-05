@@ -48,8 +48,10 @@ enum Clipboard {
         guard k != 0 else { return image }
         let w = CGFloat(image.width), h = CGFloat(image.height)
         let size = k % 2 == 1 ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
+        // Чорно-білі, CMYK та індексовані фото: такий контекст (RGBA) з їхнім профілем не створюється — малюємо в sRGB
+        let space = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)!
         guard let ctx = CGContext(data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  space: space,
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         switch k {
         case 1: ctx.translateBy(x: 0, y: w); ctx.rotate(by: -.pi / 2)
