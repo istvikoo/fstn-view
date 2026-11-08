@@ -100,18 +100,24 @@ final class Updater {
 
     // MARK: - Встановлення
 
-    /// Програму запущено звідки її не можна замінити: прямо з DMG або з тимчасової копії,
-    /// яку macOS робить для програм поза «Програмами» (App Translocation).
-    private static var canReplaceSelf: Bool {
+    /// Чому програму не можна замінити новою версією (nil — можна):
+    /// запущено прямо з DMG чи з тимчасової копії (App Translocation), або немає прав на запис у папку.
+    private static var replaceProblem: String? {
         let app = Bundle.main.bundleURL
-        if app.path.contains("/AppTranslocation/") { return false }
-        if let readOnly = try? app.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly, readOnly { return false }
-        return FileManager.default.isWritableFile(atPath: app.deletingLastPathComponent().path)
+        let readOnly = (try? app.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) ?? false
+        if app.path.contains("/AppTranslocation/") || readOnly {
+            return L("Програму запущено не з папки «Програми» (напр. прямо з DMG), тому її не можна замінити. Перетягніть %@ у «Програми», запустіть звідти і спробуйте ще раз.", AppInfo.name)
+        }
+        let folder = app.deletingLastPathComponent()
+        if !FileManager.default.isWritableFile(atPath: folder.path) {
+            return L("Немає прав на запис у папку «%@», тому програму не можна замінити. Оновіть її з облікового запису адміністратора або встановіть новий DMG зі сторінки релізу.", FileManager.default.displayName(atPath: folder.path))
+        }
+        return nil
     }
 
     private func install(from url: URL) {
-        guard Self.canReplaceSelf else {
-            showError(L("Програму запущено не з папки «Програми» (напр. прямо з DMG), тому її не можна замінити. Перетягніть %@ у «Програми», запустіть звідти і спробуйте ще раз.", AppInfo.name))
+        if let problem = Self.replaceProblem {
+            showError(problem)
             return
         }
         isBusy = true

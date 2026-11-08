@@ -72,6 +72,7 @@ private let english: [String: String] = [
     "Розкладка порівняння (\\)": "Compare Layout (\\)",
     "Скасувати видалення або переміщення": "Undo Delete or Move",
     "Відсортовано": "Sorted",
+    "Немає прав на запис у папку «%@», тому програму не можна замінити. Оновіть її з облікового запису адміністратора або встановіть новий DMG зі сторінки релізу.": "You don't have permission to write to the “%@” folder, so the app can't be replaced. Update it from an administrator account or install the new DMG from the release page.",
     "Завантаження «%@» з хмари…": "Downloading “%@” from the cloud…",
     "Копіювати всі дані": "Copy All Info",
     "Програму запущено не з папки «Програми» (напр. прямо з DMG), тому її не можна замінити. Перетягніть %@ у «Програми», запустіть звідти і спробуйте ще раз.": "The app is not running from the Applications folder (e.g. straight from the DMG), so it can't be replaced. Drag %@ to Applications, launch it from there and try again.",

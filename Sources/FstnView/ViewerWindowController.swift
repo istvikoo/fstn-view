@@ -474,6 +474,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     /// Меню «Вигляд»: обʼєднувати пари RAW+JPEG чи показувати всі файли окремо.
     func toggleGroupPairs() {
+        // Друге фото порівняння може зникнути зі списку (RAW ховається за JPEG) — закриваємо порівняння
+        if comparing { exitCompare() }
         let here = files.indices.contains(index) ? files[index] : nil
         UserDefaults.standard.set(!groupsPairs, forKey: Self.groupPairsKey)
         regroup()
@@ -544,11 +546,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                       self.current?.url != url else { return }
                 self.showQuick(quick)
             }) { [weak self] image in
-                guard let self, self.files.indices.contains(self.index), self.files[self.index] == url else { return }
+                guard let self else { return }
                 if fromCloud {
-                    self.strip.refresh(self.index)                    // тепер є і мініатюра
-                    for u in self.markTargets(url) { self.marks[u] = nil }   // оцінку з файлу тепер можна прочитати
+                    // Фото завантажилось (навіть якщо вже перейшли далі): тепер є мініатюра,
+                    // і оцінку з самого файлу можна прочитати
+                    if let i = self.files.firstIndex(of: url) { self.strip.refresh(i) }
+                    for u in self.markTargets(url) { self.marks[u] = nil }
                 }
+                guard self.files.indices.contains(self.index), self.files[self.index] == url else { return }
                 if let image {
                     self.display(image, fromCache: false)
                 } else {
@@ -908,7 +913,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     /// Delete / Backspace. Поки користувач не поставив «Більше не показувати», спершу питаємо.
     func deleteCurrent() {
-        guard files.indices.contains(index), !isShowingSheet else { return }
+        guard files.indices.contains(index), !isShowingSheet, !transferring.contains(files[index]) else { return }
         let url = files[index]
         if UserDefaults.standard.bool(forKey: Self.skipDeleteConfirmKey) {
             moveToTrash(url)
@@ -1056,21 +1061,40 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         return Sorter.destination(for: url).lastPathComponent
     }
 
+    /// Перенесення файлів іде у фоні по черзі: копіювання на інший диск чи фото з хмари не заморожує вікно.
+    private let transferQueue = DispatchQueue(label: "fstn.transfer", qos: .userInitiated)
+    /// Кадри, які зараз переносяться, — щоб повторне M чи Delete не чіпали їх удруге.
+    private var transferring = Set<URL>()
+
     /// M — перемістити поточне фото (з парою і .xmp), C — скопіювати.
     func sendCurrent(_ mode: Sorter.Mode) {
         guard files.indices.contains(index) else { return }
         let url = files[index]
+        guard !transferring.contains(url) else { return }
         let folder = Sorter.destination(for: url)
-        do {
-            let done = try Sorter.transfer(frameGroup(url), to: folder, mode: mode)
-            if mode == .move {
-                undoStack.append(done.map { (original: $0.original, movedTo: $0.moved) })
-                removeFromList(Set(done.map { $0.original }))
+        let group = frameGroup(url)
+        transferring.insert(url)
+        // Перенесення затягнулось (інший диск, хмара) — показуємо, що воно йде
+        let slow = DispatchWorkItem { [weak self] in self?.flash(mode == .move ? L("Переміщення…") : L("Копіювання…")) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: slow)
+        transferQueue.async { [weak self] in
+            let result = Result { try Sorter.transfer(group, to: folder, mode: mode) }
+            DispatchQueue.main.async {
+                slow.cancel()
+                guard let self else { return }
+                self.transferring.remove(url)
+                switch result {
+                case .success(let done):
+                    if mode == .move {
+                        self.undoStack.append(done.map { (original: $0.original, movedTo: $0.moved) })
+                        self.removeFromList(Set(done.map { $0.original }))
+                    }
+                    self.flash(mode == .move ? L("Переміщено в «%@»", folder.lastPathComponent) : L("Скопійовано в «%@»", folder.lastPathComponent))
+                    self.foldersChanged([folder, url.deletingLastPathComponent()])
+                case .failure(let error):
+                    self.showError(L("Не вдалося перенести «%@»", url.lastPathComponent), error)
+                }
             }
-            flash(mode == .move ? L("Переміщено в «%@»", folder.lastPathComponent) : L("Скопійовано в «%@»", folder.lastPathComponent))
-            foldersChanged([folder, url.deletingLastPathComponent()])
-        } catch {
-            showError(L("Не вдалося перенести «%@»", url.lastPathComponent), error)
         }
     }
 
@@ -1164,7 +1188,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private func transferMarked(_ frames: [URL], to folder: URL, mode: Sorter.Mode) {
         let groups = frames.map(frameGroup)
         flash(mode == .move ? L("Переміщення…") : L("Копіювання…"))
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        transferQueue.async { [weak self] in
             var done: [(original: URL, moved: URL)] = []
             var failure: (URL, Error)?
             for group in groups {

@@ -26,7 +26,7 @@ struct InfoPanelView: View {
                         .truncationMode(.middle)
                     Spacer(minLength: 4)
                     if let info = state.info {
-                        CopyInfoButton(state: state, text: info.plainText)
+                        CopyInfoButton(state: state, info: info)
                     }
                 }
                 HStack {
@@ -70,14 +70,15 @@ struct InfoPanelView: View {
 /// Маленька кнопка «скопіювати всі дані»: після натискання на мить показує галочку.
 private struct CopyInfoButton: View {
     @ObservedObject var state: ViewerState
-    let text: String
+    /// Текст складається лише при натисканні, а не при кожному оновленні панелі.
+    let info: ImageInfo
     private var copied: Bool { state.infoCopied }
 
     var body: some View {
         Button {
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
+            pasteboard.setString(info.plainText, forType: .string)
             state.infoCopied = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [state] in state.infoCopied = false }
         } label: {
