@@ -53,14 +53,22 @@ struct InfoPanelView: View {
                             InfoSectionView(section: section)
                         }
                     }
-                    if !state.decodeText.isEmpty {
-                        Text(state.decodeText)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                    }
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: .infinity)
+
+            // Час декодування — завжди внизу панелі, а не одразу під даними
+            if !state.decodeText.isEmpty {
+                Text(state.decodeText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
