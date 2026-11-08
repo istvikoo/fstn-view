@@ -537,7 +537,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 state.fileName = url.lastPathComponent
                 showHint { L("Завантаження «%@» з хмари…", url.lastPathComponent) }
             }
-            loader.load(url, priority: .veryHigh, onQuick: fromCloud ? nil : { [weak self] quick in
+            let startLoad = { [weak self] in
+            guard let self else { return }
+            self.loader.load(url, priority: .veryHigh, onQuick: fromCloud ? nil : { [weak self] quick in
                 guard let self, self.files.indices.contains(self.index), self.files[self.index] == url,
                       self.current?.url != url else { return }
                 self.showQuick(quick)
@@ -556,6 +558,17 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                     self.showHint { L("Не вдалося відкрити «%@»", url.lastPathComponent) }
                     self.updateOverlay()
                 }
+            }
+            }
+            if fromCloud {
+                // З хмари вантажимо, лише якщо користувач затримався на фото: при швидкому гортанні
+                // проміжні фото не завантажуються даремно
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    guard let self, self.files.indices.contains(self.index), self.files[self.index] == url else { return }
+                    startLoad()
+                }
+            } else {
+                startLoad()
             }
         }
         preloadNeighbors()
