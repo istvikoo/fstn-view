@@ -72,6 +72,7 @@ private let english: [String: String] = [
     "Розкладка порівняння (\\)": "Compare Layout (\\)",
     "Скасувати видалення або переміщення": "Undo Delete or Move",
     "Відсортовано": "Sorted",
+    "Завантаження «%@» з хмари…": "Downloading “%@” from the cloud…",
     "Копіювати всі дані": "Copy All Info",
     "Програму запущено не з папки «Програми» (напр. прямо з DMG), тому її не можна замінити. Перетягніть %@ у «Програми», запустіть звідти і спробуйте ще раз.": "The app is not running from the Applications folder (e.g. straight from the DMG), so it can't be replaced. Drag %@ to Applications, launch it from there and try again.",
     "Переміщено в «%@»": "Moved to “%@”",

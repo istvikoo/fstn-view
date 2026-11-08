@@ -121,6 +121,12 @@ final class ThumbnailStripView: NSVisualEffectView, NSCollectionViewDataSource {
         }
     }
 
+    /// Перемалювати одну мініатюру (фото щойно завантажилось з хмари).
+    func refresh(_ index: Int) {
+        guard files.indices.contains(index) else { return }
+        (collectionView.item(at: IndexPath(item: index, section: 0)) as? ThumbnailItem)?.configure(url: files[index], isCurrent: index == currentIndex)
+    }
+
     func setCurrent(_ index: Int) {
         let old = currentIndex
         currentIndex = index
@@ -206,6 +212,13 @@ private final class ThumbnailItem: NSCollectionViewItem {
         loadOp?.cancel()
         thumbView?.image = nil
         view.toolTip = url.lastPathComponent
+        thumbView?.isInCloud = false
+        // Фото ще в хмарі: мініатюра потребувала б завантажити весь файл — показуємо значок хмари
+        if ThumbnailCache.shared.cached(url) == nil, ImageLoader.isCloudOnly(url) {
+            thumbView?.isInCloud = true
+            loadOp = nil
+            return
+        }
         loadOp = ThumbnailCache.shared.load(url) { [weak self] image in
             guard let self, self.url == url, let image else { return }
             self.thumbView?.image = image
@@ -236,6 +249,21 @@ private final class ThumbView: NSView {
 
     var image: CGImage? {
         didSet { refresh() }
+    }
+
+    /// Значок хмари замість мініатюри для фото, яких ще немає на Mac.
+    private lazy var cloudIcon: NSImageView = {
+        let v = NSImageView(image: NSImage(systemSymbolName: "icloud.and.arrow.down", accessibilityDescription: nil) ?? NSImage())
+        v.symbolConfiguration = .init(pointSize: 22, weight: .regular)
+        v.contentTintColor = .tertiaryLabelColor
+        v.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(v)
+        NSLayoutConstraint.activate([v.centerXAnchor.constraint(equalTo: centerXAnchor), v.centerYAnchor.constraint(equalTo: centerYAnchor)])
+        return v
+    }()
+
+    var isInCloud = false {
+        didSet { if isInCloud || oldValue { cloudIcon.isHidden = !isInCloud } }
     }
 
     var isCurrent = false {

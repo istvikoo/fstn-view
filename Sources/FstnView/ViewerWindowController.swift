@@ -529,12 +529,24 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 display(pairedRaw[url] == nil ? dev : dev.shown(as: url), fromCache: true, developed: true)
             }
         } else {
-            loader.load(url, priority: .veryHigh, onQuick: { [weak self] quick in
+            let fromCloud = ImageLoader.isCloudOnly(url)
+            if fromCloud {
+                // Вміст ще в хмарі: замість «зависання» пояснюємо, що фото завантажується
+                current = nil
+                clearInfo()
+                state.fileName = url.lastPathComponent
+                showHint { L("Завантаження «%@» з хмари…", url.lastPathComponent) }
+            }
+            loader.load(url, priority: .veryHigh, onQuick: fromCloud ? nil : { [weak self] quick in
                 guard let self, self.files.indices.contains(self.index), self.files[self.index] == url,
                       self.current?.url != url else { return }
                 self.showQuick(quick)
             }) { [weak self] image in
                 guard let self, self.files.indices.contains(self.index), self.files[self.index] == url else { return }
+                if fromCloud {
+                    self.strip.refresh(self.index)                    // тепер є і мініатюра
+                    for u in self.markTargets(url) { self.marks[u] = nil }   // оцінку з файлу тепер можна прочитати
+                }
                 if let image {
                     self.display(image, fromCache: false)
                 } else {
@@ -684,7 +696,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private func preloadNeighbors() {
         guard !files.isEmpty else { return }
         let offsets = [direction, 2 * direction, -direction]
+        // Фото, яких ще немає на Mac, наперед не тягнемо з хмари — це забирало б канал у поточного
         let urls = offsets.map { index + $0 }.filter { files.indices.contains($0) }.map { files[$0] }
+            .filter { !ImageLoader.isCloudOnly($0) }
         var keep = Set(urls)
         if files.indices.contains(index) { keep.insert(files[index]) }
         // Фото другої половини порівняння ще може вантажитись — його не скасовуємо
@@ -763,7 +777,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private func prefetchNextFull() {
         guard !canvas.isFit else { return }
         let next = index + direction
-        guard files.indices.contains(next) else { return }
+        guard files.indices.contains(next), !ImageLoader.isCloudOnly(files[next]) else { return }
         loader.loadFull(files[next], completion: nil)
     }
 

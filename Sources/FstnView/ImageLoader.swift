@@ -75,6 +75,14 @@ final class ImageLoader {
         rawExtensions.contains(url.pathExtension.lowercased())
     }
 
+    /// Файл лише в хмарі (Google Drive, iCloud, Dropbox…): на Mac є тільки назва, а вміст
+    /// система завантажить з інтернету при першому читанні. Такі файли не читаємо наперед.
+    static func isCloudOnly(_ url: URL) -> Bool {
+        var st = stat()
+        guard lstat(url.path, &st) == 0 else { return false }
+        return st.st_flags & UInt32(SF_DATALESS) != 0
+    }
+
     /// Скільки зображень у папці (без сортування — для панелі папок).
     static func countImages(in folder: URL) -> Int {
         let items = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil,

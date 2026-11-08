@@ -61,7 +61,9 @@ enum Ratings {
         if let data = try? Data(contentsOf: side), let meta = CGImageMetadataCreateFromXMPData(data as CFData) {
             return mark(from: meta)
         }
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+        // Фото ще в хмарі — не завантажуємо його заради оцінки (лише .xmp поруч, якщо є)
+        guard !ImageLoader.isCloudOnly(url),
+              let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let meta = CGImageSourceCopyMetadataAtIndex(source, 0, nil) else { return PhotoMark() }
         return mark(from: meta)
     }
