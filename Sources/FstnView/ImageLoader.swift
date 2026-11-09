@@ -71,6 +71,36 @@ final class ImageLoader {
         supportedExtensions.contains(url.pathExtension.lowercased())
     }
 
+    static func isSupported(fileName: String) -> Bool {
+        supportedExtensions.contains((fileName as NSString).pathExtension.lowercased())
+    }
+
+    /// Вміст папки одним проходом readdir: лише імена і чи це папка, без окремого запиту
+    /// про кожен файл. На мережевому диску це в десятки разів швидше, ніж FileManager
+    /// (500 файлів: 0,6 с замість 20 с). Приховані (з крапкою) пропускаються.
+    static func directoryEntries(_ folder: URL) -> [(name: String, isFolder: Bool)] {
+        guard let dir = opendir(folder.path) else { return [] }
+        defer { closedir(dir) }
+        var entries: [(name: String, isFolder: Bool)] = []
+        while let entry = readdir(dir) {
+            var raw = entry.pointee.d_name
+            let length = Int(entry.pointee.d_namlen)
+            let name = withUnsafeBytes(of: &raw) { String(decoding: $0.prefix(length), as: UTF8.self) }
+            guard !name.hasPrefix(".") else { continue }
+            let isFolder: Bool
+            switch Int32(entry.pointee.d_type) {
+            case DT_DIR: isFolder = true
+            case DT_REG: isFolder = false
+            case DT_LNK, DT_UNKNOWN:
+                var st = stat()
+                isFolder = stat(folder.appendingPathComponent(name).path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR
+            default: continue
+            }
+            entries.append((name, isFolder))
+        }
+        return entries
+    }
+
     static func isRaw(_ url: URL) -> Bool {
         rawExtensions.contains(url.pathExtension.lowercased())
     }
@@ -78,19 +108,88 @@ final class ImageLoader {
     /// Файл лише в хмарі (Google Drive, iCloud, Dropbox…): на Mac є тільки назва, а вміст
     /// система завантажить з інтернету при першому читанні. Такі файли не читаємо наперед.
     static func isCloudOnly(_ url: URL) -> Bool {
+        // Такі файли бувають лише в папках хмарних сервісів; деінде (напр. на мережевому диску,
+        // де кожен запит до файлу йде через мережу) навіть не перевіряємо
+        let path = url.path
+        guard cloudRoots.contains(where: { path.hasPrefix($0) }) else { return false }
         var st = stat()
         guard lstat(url.path, &st) == 0 else { return false }
         return st.st_flags & UInt32(SF_DATALESS) != 0
     }
 
+    private static let cloudRoots: [String] = {
+        let home = NSHomeDirectory()
+        return [home + "/Library/CloudStorage/", home + "/Library/Mobile Documents/"]
+    }()
+
+    /// Папка на мережевому диску (SMB, AFP, NFS…): кожне читання йде через мережу.
+    static func isNetworkVolume(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.volumeIsLocalKey]).volumeIsLocal) == false
+    }
+
+    // MARK: - Файли з мережевого диска
+
+    /// Вміст фото з мережевого диска, прочитаний одним шматком. З нього робиться і прев'ю,
+    /// і оригінал для зуму — без другого читання через мережу.
+    private static let networkBytes: NSCache<NSURL, NSData> = {
+        let c = NSCache<NSURL, NSData>()
+        c.totalCostLimit = 300 * 1024 * 1024
+        return c
+    }()
+
+    static func hasNetworkBytes(_ url: URL) -> Bool { networkBytes.object(forKey: url as NSURL) != nil }
+
+    /// Джерело для декодування: з уже прочитаних байтів, або (wholeFile) прочитати файл цілком
+    /// одним шматком — через мережу це помітно швидше, ніж дрібні читання ImageIO.
+    private static func source(for url: URL, wholeFile: Bool = false) -> CGImageSource? {
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
+        if let data = networkBytes.object(forKey: url as NSURL) {
+            return CGImageSourceCreateWithData(data, options)
+        }
+        if wholeFile, let data = try? Data(contentsOf: url) {
+            networkBytes.setObject(data as NSData, forKey: url as NSURL, cost: data.count)
+            return CGImageSourceCreateWithData(data as CFData, options)
+        }
+        return CGImageSourceCreateWithURL(url as CFURL, options)
+    }
+
+    /// Миттєве прев'ю для мережевого диска: лише маленька картинка з початку файлу
+    /// (кілька десятків КБ замість усього фото). nil — якщо її у файлі немає.
+    static func decodeEmbeddedQuick(url: URL) -> QuickPreview? {
+        let start = CFAbsoluteTimeGetCurrent()
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetCount(source) > 0 else { return nil }
+        let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+        let info = ImageInfo.make(url: url, source: source, props: props)
+        // Без «FromImage…» ImageIO віддає лише вбудоване прев'ю і не читає саме фото
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: 1600,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return QuickPreview(url: url, image: image, displaySize: displaySize(info: info, image: image), info: info,
+                            decodeTime: CFAbsoluteTimeGetCurrent() - start)
+    }
+
     /// Скільки зображень у папці (без сортування — для панелі папок).
     static func countImages(in folder: URL) -> Int {
+        if isNetworkVolume(folder) {
+            return directoryEntries(folder).reduce(0) { $0 + (!$1.isFolder && isSupported(fileName: $1.name) ? 1 : 0) }
+        }
         let items = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil,
                                                                    options: [.skipsHiddenFiles])) ?? []
         return items.reduce(0) { $0 + (isSupported($1) ? 1 : 0) }
     }
 
     static func listImages(in folder: URL) -> [URL] {
+        if isNetworkVolume(folder) {
+            return directoryEntries(folder)
+                .filter { !$0.isFolder && isSupported(fileName: $0.name) }
+                .map(\.name)
+                .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+                .map { folder.appendingPathComponent($0, isDirectory: false) }
+        }
         let items = (try? FileManager.default.contentsOfDirectory(
             at: folder,
             includingPropertiesForKeys: [.isRegularFileKey],
@@ -159,6 +258,7 @@ final class ImageLoader {
     /// Прибрати файл з кешу (після видалення).
     func forget(_ url: URL) {
         cache.removeObject(forKey: url as NSURL)
+        Self.networkBytes.removeObject(forKey: url as NSURL)
         fullCache.removeObject(forKey: url as NSURL)
         rawCache.removeObject(forKey: url as NSURL)
         rawFullCache.removeObject(forKey: url as NSURL)
@@ -174,7 +274,8 @@ final class ImageLoader {
 
     /// onQuick — якщо задано, спершу швидко (~30 мс) віддається прев'ю в меншій роздільності,
     /// а потім, як завжди, чітке через completion.
-    func load(_ url: URL, priority: Operation.QueuePriority,
+    /// wholeFile — файл з мережевого диска: читаємо його цілком одним шматком.
+    func load(_ url: URL, priority: Operation.QueuePriority, wholeFile: Bool = false,
               onQuick: ((QuickPreview) -> Void)? = nil,
               completion: ((LoadedImage?) -> Void)?) {
         if let hit = cache.object(forKey: url as NSURL) {
@@ -201,7 +302,7 @@ final class ImageLoader {
             }
         }
         op.addExecutionBlock { [weak self] in
-            let result = ImageLoader.decodePreview(url: url, maxPixel: maxPixel)
+            let result = ImageLoader.decodePreview(url: url, maxPixel: maxPixel, wholeFile: wholeFile)
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let result { self.cache.setObject(result, forKey: url as NSURL, cost: result.cost) }
@@ -366,9 +467,10 @@ final class ImageLoader {
 
     // MARK: - Декодування
 
-    static func decodePreview(url: URL, maxPixel: Int) -> LoadedImage? {
+    static func decodePreview(url: URL, maxPixel: Int, wholeFile: Bool = false) -> LoadedImage? {
         let start = CFAbsoluteTimeGetCurrent()
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+        // RAW цілком не читаємо: для показу потрібне лише вбудоване прев'ю, а файл великий
+        guard let source = source(for: url, wholeFile: wholeFile && !isRaw(url)),
               CGImageSourceGetCount(source) > 0 else { return nil }
 
         let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
@@ -455,7 +557,7 @@ final class ImageLoader {
     }
 
     static func decodeFull(url: URL) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        guard let source = source(for: url) else { return nil }
         let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
         let w = (props[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0
         let h = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0

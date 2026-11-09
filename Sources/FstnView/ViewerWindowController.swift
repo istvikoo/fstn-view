@@ -66,6 +66,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private var listingToken = UUID()
     /// Папка, яку зараз переглядаємо (навіть якщо в ній немає фото).
     private var openedFolder: URL?
+    /// Папка на мережевому диску (SMB тощо): кожне фото йде через мережу, тож вантажимо ощадливо.
+    private var isNetworkFolder = false
+    /// Фото, яке зараз завантажується з мережі (поки на екрані розмите прев'ю).
+    private var networkLoading: URL?
     /// Оцінки й мітки кадрів (прочитані з XMP), щоб не читати файл щоразу.
     private var marks: [URL: PhotoMark] = [:]
     private let markQueue = DispatchQueue(label: "fstn.marks", qos: .userInitiated)
@@ -199,6 +203,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let folder = isFolder ? url : url.deletingLastPathComponent()
         if comparing { exitCompare() }
         openedFolder = folder.standardizedFileURL
+        isNetworkFolder = ImageLoader.isNetworkVolume(folder)
         marks = [:]                 // оцінки могли змінити в іншій програмі — читаємо заново
         // Дерево папок читає диск — оновлюємо його вже після того, як фото з'явилось
         DispatchQueue.main.async { [weak self] in self?.folderPanel.setCurrentFolder(folder) }
@@ -515,7 +520,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         pendingView = keepingView
         updatePosition()
         window?.title = url.lastPathComponent
-        window?.representedURL = url
+        // Значок файлу в заголовку macOS читає з диска одразу; з мережевого диска це ~0,8 с затримки
+        // на кожному фото, тому там значка немає
+        window?.representedURL = isNetworkFolder ? nil : url
         fullRequestedFor = nil
         // RAW проявляється лише для того фото, де натиснули A
         rawShownFor = nil
@@ -532,6 +539,25 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             }
         } else {
             let fromCloud = ImageLoader.isCloudOnly(url)
+            let overNetwork = !fromCloud && isNetworkFolder
+            if overNetwork {
+                // Мережа: попереднє фото прибираємо одразу (щоб оцінка чи Delete не пішли «не тому» фото),
+                // потім маленьке прев'ю з початку файлу, а чітке — слідом
+                networkLoading = url
+                current = nil
+                clearInfo()
+                state.fileName = url.lastPathComponent
+                showHint { L("Завантаження «%@» з мережі…", url.lastPathComponent) }
+                updateOverlay()
+                DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+                    let quick = ImageLoader.decodeEmbeddedQuick(url: url)
+                    DispatchQueue.main.async {
+                        guard let self, self.files.indices.contains(self.index), self.files[self.index] == url,
+                              self.current?.url != url, self.quickShownFor != url else { return }
+                        if let quick { self.showQuick(quick) }
+                    }
+                }
+            }
             if fromCloud {
                 // Вміст ще в хмарі: замість «зависання» пояснюємо, що фото завантажується
                 current = nil
@@ -541,7 +567,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             }
             let startLoad = { [weak self] in
             guard let self else { return }
-            self.loader.load(url, priority: .veryHigh, onQuick: fromCloud ? nil : { [weak self] quick in
+            self.loader.load(url, priority: .veryHigh, wholeFile: overNetwork, onQuick: fromCloud || overNetwork ? nil : { [weak self] quick in
                 guard let self, self.files.indices.contains(self.index), self.files[self.index] == url,
                       self.current?.url != url else { return }
                 self.showQuick(quick)
@@ -554,6 +580,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                     for u in self.markTargets(url) { self.marks[u] = nil }
                 }
                 guard self.files.indices.contains(self.index), self.files[self.index] == url else { return }
+                if self.networkLoading == url { self.networkLoading = nil }
                 if let image {
                     self.display(image, fromCache: false)
                 } else {
@@ -565,9 +592,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 }
             }
             }
-            if fromCloud {
-                // З хмари вантажимо, лише якщо користувач затримався на фото: при швидкому гортанні
-                // проміжні фото не завантажуються даремно
+            if fromCloud || overNetwork {
+                // З хмари чи мережі вантажимо, лише якщо користувач затримався на фото: при швидкому
+                // гортанні проміжні фото не завантажуються даремно
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                     guard let self, self.files.indices.contains(self.index), self.files[self.index] == url else { return }
                     startLoad()
@@ -609,7 +636,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         // Для проявленого RAW оригінал уже є.
         fullPrefetch?.cancel()
         let url = image.url
-        if !developed && !embedded {
+        if networkLoading == url { networkLoading = nil }
+        // З мережі оригінал наперед беремо лише з уже прочитаних байтів (без другого читання через мережу)
+        if !developed && !embedded && (!isNetworkFolder || ImageLoader.hasNetworkBytes(url)) {
             let work = DispatchWorkItem { [weak self] in
                 guard let self, self.current?.url == url else { return }
                 self.loader.loadFull(url, completion: nil)
@@ -635,6 +664,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             ? L("З кешу (декодовано за %d мс)", ms)
             : L("Декодовано за %d мс · прев'ю %d×%d", ms, pw, ph) }
         updateOverlay()
+        // Мережа: наступне фото готуємо лише тепер, коли поточне вже на екрані, — не ділимо з ним швидкість
+        if isNetworkFolder { preloadNeighbors() }
     }
 
     private func clearInfo() {
@@ -700,6 +731,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
             parts.append("[ RAW ]")
         } else if rawDeveloping == here {
             parts.append("[ RAW… ]")
+        } else if networkLoading == here {
+            parts.append(L("[ завантаження… ]"))
         } else if pair != nil {
             parts.append("[ JPEG+RAW ]")
         }
@@ -713,7 +746,12 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     private func preloadNeighbors() {
         guard !files.isEmpty else { return }
-        let offsets = [direction, 2 * direction, -direction]
+        var offsets = [direction, 2 * direction, -direction]
+        if isNetworkFolder {
+            // Через мережу — лише одне наступне фото і лише коли поточне вже показано
+            let shown = files.indices.contains(index) && current?.url == files[index]
+            offsets = shown ? [direction] : []
+        }
         // Фото, яких ще немає на Mac, наперед не тягнемо з хмари — це забирало б канал у поточного
         let urls = offsets.map { index + $0 }.filter { files.indices.contains($0) }.map { files[$0] }
             .filter { !ImageLoader.isCloudOnly($0) }
@@ -723,7 +761,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         if comparing, let other = otherURL { keep.insert(other) }
         loader.cancelPending(keeping: keep)
         for (i, url) in urls.enumerated() {
-            loader.load(url, priority: i == 0 ? .high : .normal, completion: nil)
+            loader.load(url, priority: i == 0 ? .high : .normal, wholeFile: isNetworkFolder, completion: nil)
         }
     }
 
@@ -795,7 +833,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private func prefetchNextFull() {
         guard !canvas.isFit else { return }
         let next = index + direction
-        guard files.indices.contains(next), !ImageLoader.isCloudOnly(files[next]) else { return }
+        guard files.indices.contains(next), !ImageLoader.isCloudOnly(files[next]),
+              !isNetworkFolder || ImageLoader.hasNetworkBytes(files[next]) else { return }
         loader.loadFull(files[next], completion: nil)
     }
 

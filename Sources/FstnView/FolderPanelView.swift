@@ -1,11 +1,21 @@
 import AppKit
 
-/// Вузол дерева папок. Підпапки читаються лише тоді, коли вузол розгортають.
+/// Підпапка, прочитана з диска: адреса і назва для показу.
+struct FolderEntry {
+    let url: URL
+    let title: String
+}
+
+/// Вузол дерева папок. Підпапки читаються у фоні, коли вузол розгортають:
+/// на мережевому диску це може тривати десятки секунд, і вікно не повинне чекати.
 final class FolderNode {
     let url: URL
     let title: String
     let isVolume: Bool
     private(set) var children: [FolderNode]?
+    /// Вміст папки змінився — перечитати (старий список лишається на екрані, поки читається новий).
+    private(set) var isStale = false
+    var isLoading = false
 
     init(url: URL, title: String? = nil, isVolume: Bool = false) {
         self.url = url.standardizedFileURL
@@ -13,27 +23,39 @@ final class FolderNode {
         self.isVolume = isVolume
     }
 
-    /// Підпапки (без прихованих і без «пакетів» на кшталт .photoslibrary).
-    func loadChildren() -> [FolderNode] {
-        if let children { return children }
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isPackageKey]
-        let items = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: keys,
-                                                                   options: [.skipsHiddenFiles])) ?? []
-        let folders = items.filter { u in
-            let v = try? u.resourceValues(forKeys: Set(keys))
-            return v?.isDirectory == true && v?.isPackage != true
+    /// Підпапки (без прихованих і без «пакетів» на кшталт .photoslibrary). Читає диск — лише у фоні.
+    static func subfolders(of url: URL) -> [FolderEntry] {
+        if ImageLoader.isNetworkVolume(url) {
+            // Мережевий диск: імена одним проходом, «пакет» перевіряємо лише в папок з розширенням (.app тощо)
+            return ImageLoader.directoryEntries(url)
+                .filter(\.isFolder)
+                .map { url.appendingPathComponent($0.name, isDirectory: true) }
+                .filter { $0.pathExtension.isEmpty || (try? $0.resourceValues(forKeys: [.isPackageKey]))?.isPackage != true }
+                .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+                .map { FolderEntry(url: $0.standardizedFileURL, title: $0.lastPathComponent) }
         }
-        .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-        .map { FolderNode(url: $0) }
-        children = folders
-        return folders
+        let items = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey],
+                                                                   options: [.skipsHiddenFiles])) ?? []
+        return items
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
+            // «Пакет» перевіряємо лише для папок: для кожного файлу це зайвий запит до диска
+            .filter { (try? $0.resourceValues(forKeys: [.isPackageKey]))?.isPackage != true }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            .map { FolderEntry(url: $0.standardizedFileURL, title: FileManager.default.displayName(atPath: $0.path)) }
+    }
+
+    /// Ставить прочитані підпапки. Вузли, що вже були, лишаються ті самі — з ними і їхнє розгортання.
+    func setChildren(_ entries: [FolderEntry]) {
+        let old = Dictionary((children ?? []).map { ($0.url, $0) }, uniquingKeysWith: { a, _ in a })
+        children = entries.map { old[$0.url] ?? FolderNode(url: $0.url, title: $0.title) }
+        isStale = false
     }
 
     /// Підпапки вже прочитані.
     var isLoaded: Bool { children != nil }
 
-    /// Папку перейменували, створили підпапку («Відсортовано») тощо — перечитати при наступному розгортанні.
-    func invalidate() { children = nil }
+    /// Папку перейменували, створили підпапку («Відсортовано») тощо — перечитати.
+    func invalidate() { isStale = true }
 }
 
 extension URL {
@@ -157,6 +179,10 @@ final class FolderPanelView: NSVisualEffectView, NSOutlineViewDataSource, NSOutl
     }
 
     /// Показати в дереві папку, яку зараз переглядають: розгорнути шлях до неї і виділити.
+    /// Останній запит показати папку (поки шлях до неї читається у фоні, могли відкрити іншу).
+    private var pathToken = UUID()
+    private let listQueue = DispatchQueue(label: "fstn.folderList", qos: .userInitiated)
+
     func setCurrentFolder(_ folder: URL) {
         let folder = folder.standardizedFileURL
         current = folder
@@ -170,32 +196,68 @@ final class FolderPanelView: NSVisualEffectView, NSOutlineViewDataSource, NSOutl
         } else {
             root = URL(fileURLWithPath: "/")
         }
-        // Шлях від кореня до папки; якщо на ньому є прихована папка (напр. /private/tmp),
-        // дерево починаємо з батьківської папки
-        func path(from root: URL) -> [FolderNode]? {
-            var chain = [FolderNode]()
-            var node = tree.items.first?.url == root ? tree.items[0] : FolderNode(url: root)
-            chain.append(node)
-            for part in folder.pathComponents.dropFirst(root.pathComponents.count) {
-                guard let next = node.loadChildren().first(where: { $0.url.lastPathComponent == part }) else { return nil }
-                chain.append(next)
-                node = next
+        // Уже прочитані підпапки на шляху — щоб не читати їх із диска вдруге
+        var known: [URL: [FolderEntry]] = [:]
+        func collect(_ nodes: [FolderNode]) {
+            for n in nodes where folder.isInside(n.url) {
+                guard let kids = n.children, !n.isStale else { continue }
+                known[n.url] = kids.map { FolderEntry(url: $0.url, title: $0.title) }
+                collect(kids)
             }
-            return chain
         }
-        var chain = path(from: root)
-        if chain == nil {
-            let parent = folder.deletingLastPathComponent().standardizedFileURL
-            chain = path(from: parent) ?? [FolderNode(url: folder)]
+        collect(tree.items)
+        let token = UUID()
+        pathToken = token
+        // Шлях від кореня до папки читаємо у фоні; якщо на ньому є прихована папка (напр. /private/tmp),
+        // дерево починаємо з батьківської папки
+        listQueue.async { [weak self] in
+            func path(from root: URL) -> [URL: [FolderEntry]]? {
+                var lists: [URL: [FolderEntry]] = [:]
+                var level = root
+                for part in folder.pathComponents.dropFirst(root.pathComponents.count) {
+                    let subs = known[level] ?? FolderNode.subfolders(of: level)
+                    lists[level] = subs
+                    guard let next = subs.first(where: { $0.url.lastPathComponent == part }) else { return nil }
+                    level = next.url
+                }
+                return lists
+            }
+            var top = root
+            var lists = path(from: root)
+            if lists == nil {
+                top = folder.deletingLastPathComponent().standardizedFileURL
+                lists = path(from: top)
+            }
+            if lists == nil { top = folder }
+            let found = lists ?? [:]
+            // Назву теж читаємо тут: на мережевому диску це запит до сервера
+            let topTitle = FileManager.default.displayName(atPath: top.path)
+            DispatchQueue.main.async {
+                guard let self, self.pathToken == token else { return }
+                self.showPath(to: folder, top: top, title: topTitle, lists: found)
+            }
         }
-        guard let chain, let top = chain.first else { return }
+    }
+
+    /// Розгорнути в дереві шлях до папки (підпапки вже прочитані у фоні) і виділити її.
+    private func showPath(to folder: URL, top topURL: URL, title: String, lists: [URL: [FolderEntry]]) {
+        let top = tree.items.first?.url == topURL ? tree.items[0] : FolderNode(url: topURL, title: title)
+        var chain = [top]
+        var node = top
+        for part in folder.pathComponents.dropFirst(topURL.pathComponents.count) {
+            if let subs = lists[node.url], !node.isLoaded || node.isStale { node.setChildren(subs) }
+            guard let next = node.children?.first(where: { $0.url.lastPathComponent == part }) else { break }
+            chain.append(next)
+            node = next
+        }
         if tree.items.first !== top {
             tree = SectionNode(title: L("Папки"), items: [top])
             reload()
+        } else {
+            for n in chain.dropLast() { outline.reloadItem(n, reloadChildren: true) }
         }
         for n in chain { outline.expandItem(n) }
-        let node = chain[chain.count - 1]
-        let row = outline.row(forItem: node)
+        let row = outline.row(forItem: chain[chain.count - 1])
         if row >= 0 {
             outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             outline.scrollRowToVisible(row)
@@ -213,16 +275,14 @@ final class FolderPanelView: NSVisualEffectView, NSOutlineViewDataSource, NSOutl
         func find(_ nodes: [FolderNode]) -> FolderNode? {
             for n in nodes {
                 if n.url == folder { return n }
-                if folder.isInside(n.url), let kids = outline.isItemExpanded(n) ? n.loadChildren() : nil,
+                if folder.isInside(n.url), outline.isItemExpanded(n), let kids = n.children,
                    let hit = find(kids) { return hit }
             }
             return nil
         }
         if let node = find(tree.items) {
-            let expanded = outline.isItemExpanded(node)
             node.invalidate()
-            outline.reloadItem(node, reloadChildren: true)
-            if expanded { outline.expandItem(node) }
+            loadChildren(of: node)
         } else {
             outline.reloadData()
         }
@@ -241,8 +301,31 @@ final class FolderPanelView: NSVisualEffectView, NSOutlineViewDataSource, NSOutl
         switch item {
         case nil: return tree.items.isEmpty ? 1 : 2
         case let s as SectionNode: return s.items.count
-        case let n as FolderNode: return n.loadChildren().count
+        case let n as FolderNode:
+            if !n.isLoaded || n.isStale { loadChildren(of: n) }
+            return n.children?.count ?? 0
         default: return 0
+        }
+    }
+
+    /// Читає підпапки у фоні й показує їх, коли прочитано.
+    private func loadChildren(of node: FolderNode) {
+        guard !node.isLoading else { return }
+        node.isLoading = true
+        let url = node.url
+        listQueue.async { [weak self] in
+            let subs = FolderNode.subfolders(of: url)
+            DispatchQueue.main.async {
+                node.isLoading = false
+                node.setChildren(subs)
+                guard let self else { return }
+                let expanded = self.outline.isItemExpanded(node)
+                self.outline.reloadItem(node, reloadChildren: true)
+                if expanded { self.outline.expandItem(node) }
+                if let current = self.current, current.isInside(node.url), current != node.url {
+                    self.setCurrentFolder(current)        // виділити поточну папку, коли її рядок з'явився
+                }
+            }
         }
     }
 
@@ -250,7 +333,7 @@ final class FolderPanelView: NSVisualEffectView, NSOutlineViewDataSource, NSOutl
         switch item {
         case nil: return index == 0 ? favorites : tree
         case let s as SectionNode: return s.items[index]
-        case let n as FolderNode: return n.loadChildren()[index]
+        case let n as FolderNode: return n.children?[index] ?? n
         default: return favorites
         }
     }
@@ -260,7 +343,7 @@ final class FolderPanelView: NSVisualEffectView, NSOutlineViewDataSource, NSOutl
         // Вибране — лише ярлики, без розгортання; в дереві — розгортаються всі (порожні після читання — ні)
         guard let n = item as? FolderNode, (outlineView.parent(forItem: n) as? SectionNode) !== favorites else { return false }
         // Поки підпапки не прочитані — показуємо трикутник; потім — лише якщо вони є
-        return n.isLoaded ? !n.loadChildren().isEmpty : true
+        return n.children.map { !$0.isEmpty } ?? true
     }
 
     // MARK: - NSOutlineViewDelegate

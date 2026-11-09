@@ -72,6 +72,8 @@ private let english: [String: String] = [
     "Розкладка порівняння (\\)": "Compare Layout (\\)",
     "Скасувати видалення або переміщення": "Undo Delete or Move",
     "Відсортовано": "Sorted",
+    "Завантаження «%@» з мережі…": "Loading “%@” over the network…",
+    "[ завантаження… ]": "[ loading… ]",
     "Немає прав на запис у папку «%@», тому програму не можна замінити. Оновіть її з облікового запису адміністратора або встановіть новий DMG зі сторінки релізу.": "You don't have permission to write to the “%@” folder, so the app can't be replaced. Update it from an administrator account or install the new DMG from the release page.",
     "Завантаження «%@» з хмари…": "Downloading “%@” from the cloud…",
     "Копіювати всі дані": "Copy All Info",
