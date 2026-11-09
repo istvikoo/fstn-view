@@ -245,11 +245,18 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                     }
                 } else {
                     let path = url.standardizedFileURL.path
-                    let same: (URL) -> Bool = { $0.standardizedFileURL.path == path }
-                    if list.contains(where: same) {
+                    let name = url.lastPathComponent
+                    // Шлях могли дати з іншим регістром літер, ніж на диску («RAW» замість «raw»):
+                    // тоді шукаємо файл у списку за назвою
+                    let listed = list.first { $0.standardizedFileURL.path == path }
+                        ?? list.first { $0.lastPathComponent.compare(name, options: .caseInsensitive) == .orderedSame }
+                    let same: (URL) -> Bool = { $0 == listed }
+                    if listed != nil {
                         self.allFiles = list
                         if let i = self.files.firstIndex(where: same) {
                             self.index = i
+                            // Далі працюємо з адресою зі списку — показуємо фото вже за нею
+                            if listed != url { self.showCurrent(); return }
                         } else if let jpg = self.pairedRaw.first(where: { same($0.value) })?.key,
                                   let i = self.files.firstIndex(of: jpg) {
                             // Відкрили RAW, у якого є JPEG-пара: показуємо пару як один кадр
