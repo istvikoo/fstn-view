@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 
 /// Оновлення з GitHub Releases: шукає новішу версію, завантажує zip, замінює програму і перезапускає її.
 /// Релізи збирає GitHub Actions (.github/workflows/release.yml) з тегу vX.Y.Z — див. README.
@@ -12,6 +13,8 @@ final class Updater {
         struct Asset: Decodable {
             let name: String
             let browser_download_url: URL
+            /// Контрольна сума файлу від GitHub: «sha256:…» (у старих релізах її немає).
+            let digest: String?
         }
         let tag_name: String
         let body: String?
@@ -77,7 +80,7 @@ final class Updater {
         let response = alert.runModal()
         let first = NSApplication.ModalResponse.alertFirstButtonReturn
         if let zip, response == first {
-            install(from: zip.browser_download_url)
+            install(zip)
         } else if response == (zip == nil ? first : .alertSecondButtonReturn) {
             NSWorkspace.shared.open(release.html_url)
         }
@@ -115,40 +118,99 @@ final class Updater {
         return nil
     }
 
-    private func install(from url: URL) {
+    private func install(_ asset: Release.Asset) {
         if let problem = Self.replaceProblem {
             showError(problem)
             return
         }
         isBusy = true
-        URLSession.shared.downloadTask(with: url) { [weak self] file, _, error in
+        let task = URLSession.shared.downloadTask(with: asset.browser_download_url) { [weak self] file, _, error in
             var result: Result<URL, Error>
             if let file {
-                result = Result { try Self.unpack(zip: file) }
+                result = Result {
+                    try Self.verify(file, digest: asset.digest)
+                    return try Self.unpack(zip: file)
+                }
             } else {
                 result = .failure(error ?? URLError(.unknown))
             }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isBusy = false
+                self.hideProgress()
                 switch result {
                 case .success(let newApp):
                     do {
                         try self.replaceAndRelaunch(with: newApp)
                     } catch {
+                        try? FileManager.default.removeItem(at: newApp.deletingLastPathComponent())
                         self.showError(error.localizedDescription)
                     }
                 case .failure(let error):
                     self.showError(error.localizedDescription)
                 }
             }
-        }.resume()
+        }
+        showProgress(for: task)
+        task.resume()
+    }
+
+    // MARK: - Хід завантаження
+
+    private var progressPanel: NSPanel?
+    private var progressObservation: NSKeyValueObservation?
+
+    private func showProgress(for task: URLSessionDownloadTask) {
+        let label = NSTextField(labelWithString: L("Завантаження оновлення…"))
+        let bar = NSProgressIndicator()
+        bar.isIndeterminate = false
+        bar.minValue = 0
+        bar.maxValue = 1
+        let stack = NSStackView(views: [label, bar])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 16, left: 20, bottom: 18, right: 20)
+        bar.widthAnchor.constraint(equalToConstant: 280).isActive = true
+
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 70),
+                            styleMask: [.titled, .utilityWindow], backing: .buffered, defer: false)
+        panel.title = AppInfo.name
+        panel.contentView = stack
+        panel.isFloatingPanel = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.center()
+        panel.orderFront(nil)
+        progressPanel = panel
+        progressObservation = task.progress.observe(\.fractionCompleted) { progress, _ in
+            let value = progress.fractionCompleted
+            DispatchQueue.main.async { bar.doubleValue = value }
+        }
+    }
+
+    private func hideProgress() {
+        progressObservation = nil
+        progressPanel?.close()
+        progressPanel = nil
+    }
+
+    /// Звіряє завантажений файл з контрольною сумою з GitHub — пошкоджений або підмінений архів не встановлюємо.
+    private static func verify(_ file: URL, digest: String?) throws {
+        guard let digest = digest?.lowercased(), digest.hasPrefix("sha256:") else { return }
+        let data = try Data(contentsOf: file, options: .mappedIfSafe)
+        let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard actual == digest.dropFirst("sha256:".count) else {
+            throw NSError(domain: "Updater", code: 2, userInfo: [NSLocalizedDescriptionKey: L("Завантажений файл оновлення пошкоджено: контрольна сума не збігається. Спробуйте ще раз або встановіть DMG зі сторінки релізу.")])
+        }
     }
 
     /// Розпаковує zip у тимчасову папку і повертає знайдений .app (перевіряючи, що це саме наша програма).
     private static func unpack(zip: URL) throws -> URL {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fstn-view-update-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var keep = false
+        defer { if !keep { try? FileManager.default.removeItem(at: dir) } }   // не лишаємо сміття після невдачі
         try run("/usr/bin/ditto", ["-x", "-k", zip.path, dir.path])
 
         let items = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
@@ -159,12 +221,14 @@ final class Updater {
         }
         // Файл завантажено не браузером, але про всяк випадок знімаємо позначку карантину
         try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", app.path])
+        keep = true
         return app
     }
 
     private func replaceAndRelaunch(with newApp: URL) throws {
         let current = Bundle.main.bundleURL
         _ = try FileManager.default.replaceItemAt(current, withItemAt: newApp)
+        try? FileManager.default.removeItem(at: newApp.deletingLastPathComponent())   // порожня тимчасова папка
         // Перезапуск після виходу поточного процесу
         let relaunch = Process()
         relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")

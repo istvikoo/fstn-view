@@ -269,7 +269,13 @@ final class FolderPanelView: NSVisualEffectView, NSOutlineViewDataSource, NSOutl
     }
 
     /// Папку змінили (з'явилась «Відсортовано», перенесли фото) — оновити її підпапки й кількість.
-    func refresh(_ folder: URL) {
+    /// Кілька папок одразу — поточну папку в дереві шукаємо лише раз наприкінці.
+    func refresh(_ folders: Set<URL>) {
+        for folder in folders { refreshNode(folder) }
+        if let current { setCurrentFolder(current) }
+    }
+
+    private func refreshNode(_ folder: URL) {
         let folder = folder.standardizedFileURL
         counts[folder] = nil
         func find(_ nodes: [FolderNode]) -> FolderNode? {
@@ -286,7 +292,6 @@ final class FolderPanelView: NSVisualEffectView, NSOutlineViewDataSource, NSOutl
         } else {
             outline.reloadData()
         }
-        if let current { setCurrentFolder(current) }
     }
 
     private func reload() {

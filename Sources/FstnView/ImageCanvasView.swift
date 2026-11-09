@@ -157,7 +157,13 @@ final class ImageCanvasView: NSView {
     func setImage(_ image: CGImage, size: CGSize, resetView: Bool, keeping state: ViewState? = nil) {
         hint.isHidden = true
         imageLayer.contents = image
-        if resetView || imageSize != size {
+        if !resetView, !isFit, imageSize != size, viewSize.width > 0, viewSize.height > 0 {
+            // Те саме фото, але чітке прев'ю має трохи інші пропорції, ніж швидке (вбудована мініатюра
+            // RAW буває з чорними смугами): масштаб і місце лишаємо, а не скидаємо
+            let old = viewSize
+            imageSize = size
+            center = CGPoint(x: center.x / old.width * viewSize.width, y: center.y / old.height * viewSize.height)
+        } else if resetView || imageSize != size {
             imageSize = size
             isFit = true
             if let state, state.zoom > fitZoom + 0.0001 {

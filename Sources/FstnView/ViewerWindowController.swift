@@ -210,6 +210,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let isFolder = isDir.boolValue
         let folder = isFolder ? url : url.deletingLastPathComponent()
         if comparing { exitCompare() }
+        // Повороти — лише на час перегляду папки; в іншій папці вони вже не потрібні
+        if openedFolder != folder.standardizedFileURL { rotations = [:] }
         openedFolder = folder.standardizedFileURL
         isNetworkFolder = ImageLoader.isNetworkVolume(folder)
         marks = [:]                 // оцінки могли змінити в іншій програмі — читаємо заново
@@ -672,10 +674,9 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         hintMaker = nil
         let (pw, ph) = (image.preview.width, image.preview.height)
         let (fw, fh) = (Int(image.displaySize.width), Int(image.displaySize.height))
-        let (ew, eh) = (image.preview.width, image.preview.height)
         let developedByDefault = image.isDevelopedRAW
         setDecodeText { embedded
-            ? L("Вбудований JPEG камери %d×%d", ew, eh)
+            ? L("Вбудований JPEG камери %d×%d", pw, ph)
             : developed || developedByDefault
             ? L("RAW проявлено за %d мс · %d×%d", ms, fw, fh)
             : fromCache
@@ -875,20 +876,34 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     /// 1–5: поставити зірки. Повторне натискання тієї ж цифри — прибрати оцінку.
     func setRating(_ rating: Int) {
-        guard files.indices.contains(index) else { return }
-        let url = files[index]
-        var mark = marks[url] ?? Ratings.read(markSource(url))
-        mark.rating = mark.rating == rating ? 0 : rating
-        applyMark(mark, to: url)
+        changeMark { $0.rating = $0.rating == rating ? 0 : rating }
     }
 
     /// 6–9: кольорова мітка. Повторне натискання — прибрати.
     func setLabel(_ label: ColorLabel?) {
+        changeMark { $0.label = $0.label == label ? nil : label }
+    }
+
+    /// Якщо оцінку кадру ще не прочитано, читаємо її у фоні (а не в головному потоці:
+    /// на мережевому диску це зупиняло б вікно) і лише тоді міняємо.
+    private func changeMark(_ change: @escaping (inout PhotoMark) -> Void) {
         guard files.indices.contains(index) else { return }
         let url = files[index]
-        var mark = marks[url] ?? Ratings.read(markSource(url))
-        mark.label = mark.label == label ? nil : label
-        applyMark(mark, to: url)
+        if var mark = marks[url] {
+            change(&mark)
+            applyMark(mark, to: url)
+            return
+        }
+        let source = markSource(url)
+        markQueue.async { [weak self] in
+            let read = Ratings.read(source)
+            DispatchQueue.main.async {
+                guard let self, self.allFiles.contains(url) else { return }
+                var mark = self.marks[url] ?? read
+                change(&mark)
+                self.applyMark(mark, to: url)
+            }
+        }
     }
 
     private func applyMark(_ mark: PhotoMark, to url: URL) {
@@ -1021,8 +1036,11 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Усі файли кадру: фото, його RAW/JPEG-пара і файл-супутник з оцінкою (IMG_0001.xmp).
-    private func frameGroup(_ url: URL) -> [URL] {
-        let photos = [url] + companions(of: url)
+    /// Складається з двох кроків: фото — з головного потоку, а наявність .xmp перевіряється
+    /// вже у фоні (на мережевому диску це звернення до сервера).
+    private func framePhotos(_ url: URL) -> [URL] { [url] + companions(of: url) }
+
+    private static func withSidecars(_ photos: [URL]) -> [URL] {
         let sidecars = Set(photos.map(Ratings.sidecar(for:))).filter { FileManager.default.fileExists(atPath: $0.path) }
         return photos + sidecars.sorted { $0.path < $1.path }
     }
@@ -1032,8 +1050,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         // Кадр уже видаляється або переноситься — друге натискання не має слати його в Кошик ще раз
         guard !transferring.contains(url) else { return }
         transferring.insert(url)
-        let group = frameGroup(url)
-        NSWorkspace.shared.recycle(group) { [weak self] trashed, error in
+        let photos = framePhotos(url)
+        transferQueue.async { [weak self] in
+          let group = Self.withSidecars(photos)
+          NSWorkspace.shared.recycle(group) { [weak self] trashed, error in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.transferring.remove(url)
@@ -1050,6 +1070,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 }
                 self.removeFromList(Set(moved.map { $0.original }))
             }
+          }
         }
     }
 
@@ -1135,6 +1156,8 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         } else {
             // Прибрали поточне — показуємо наступне (або попереднє, якщо це було останнє)
             index = min(max(index - before, 0), files.count - 1)
+            // Наступне фото — те саме, що вже в другій половині: порівнювати його з собою нема сенсу
+            if comparing, files[index] == otherURL { exitCompare() }
             showCurrent()
         }
     }
@@ -1144,22 +1167,34 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     /// ⌘Z: повертає останнє видалене (з Кошика) або переміщене (з «Відсортовано») на старе місце.
     func undo() {
         guard let group = undoStack.popLast() else { NSSound.beep(); return }
-        var restored: [URL] = []
-        for item in group {
-            do {
-                try FileManager.default.moveItem(at: item.movedTo, to: item.original)
-                restored.append(item.original)
-            } catch {
-                showError(L("Не вдалося відновити «%@»", item.original.lastPathComponent), error)
+        // Повернення файлів — у фоні: між дисками це копіювання
+        transferQueue.async { [weak self] in
+            var restored: [URL] = []
+            var failures: [(URL, Error)] = []
+            for item in group {
+                do {
+                    try FileManager.default.moveItem(at: item.movedTo, to: item.original)
+                    restored.append(item.original)
+                } catch {
+                    failures.append((item.original, error))
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for (url, error) in failures { self.showError(L("Не вдалося відновити «%@»", url.lastPathComponent), error) }
+                self.showRestored(restored, from: group.map { $0.movedTo.deletingLastPathComponent() })
             }
         }
+    }
+
+    private func showRestored(_ restored: [URL], from folders: [URL]) {
         guard let first = restored.first else { return }
-        foldersChanged(group.map { $0.movedTo.deletingLastPathComponent() } + [first.deletingLastPathComponent()])
+        foldersChanged(folders + [first.deletingLastPathComponent()])
         // Повертаємо у список, якщо переглядаємо ту саму папку
         let folder = first.deletingLastPathComponent().standardizedFileURL.path
         if openedFolder?.path == folder {
             var list = allFiles
-            for u in restored where u.pathExtension.lowercased() != "xmp" {
+            for u in restored where u.pathExtension.lowercased() != "xmp" && !list.contains(u) {
                 let name = u.lastPathComponent
                 let pos = list.firstIndex { $0.lastPathComponent.localizedStandardCompare(name) == .orderedDescending } ?? list.count
                 list.insert(u, at: pos)
@@ -1191,14 +1226,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         guard files.indices.contains(index) else { return }
         let url = files[index]
         guard !transferring.contains(url) else { return }
-        let folder = Sorter.destination(for: url)
-        let group = frameGroup(url)
+        let photos = framePhotos(url)
         transferring.insert(url)
         // Перенесення затягнулось (інший диск, хмара) — показуємо, що воно йде
         let slow = DispatchWorkItem { [weak self] in self?.flash(mode == .move ? L("Переміщення…") : L("Копіювання…")) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: slow)
         transferQueue.async { [weak self] in
-            let result = Result { try Sorter.transfer(group, to: folder, mode: mode) }
+            // Папку призначення і .xmp шукаємо тут, у фоні: на мережевому диску це звернення до сервера
+            let folder = Sorter.destination(for: url)
+            let result = Result { try Sorter.transfer(Self.withSidecars(photos), to: folder, mode: mode) }
             DispatchQueue.main.async {
                 slow.cancel()
                 guard let self else { return }
@@ -1267,7 +1303,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
         let refresh = { [weak self] in
             guard let self else { return }
             let chosen = selected()
-            let fileCount = chosen.reduce(0) { $0 + self.frameGroup($1).count }
+            let fileCount = chosen.reduce(0) { $0 + Self.withSidecars(self.framePhotos($1)).count }
             count.stringValue = L("Підходить: %d фото (%d файлів)", chosen.count, fileCount)
             alert.buttons.first?.title = mode.indexOfSelectedItem == 1 ? L("Скопіювати") : L("Перемістити")
             alert.buttons.first?.isEnabled = !chosen.isEmpty
@@ -1306,17 +1342,29 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func transferMarked(_ frames: [URL], to folder: URL, mode: Sorter.Mode) {
-        let groups = frames.map(frameGroup)
+        // Кадри, які вже переносяться чи видаляються, пропускаємо; решту блокуємо до кінця перенесення
+        let frames = frames.filter { !transferring.contains($0) }
+        guard !frames.isEmpty else { return }
+        let busy = Set(frames)
+        transferring.formUnion(busy)
+        let groups = frames.map(framePhotos)
         flash(mode == .move ? L("Переміщення…") : L("Копіювання…"))
         transferQueue.async { [weak self] in
             var done: [(original: URL, moved: URL)] = []
             var failure: (URL, Error)?
-            for group in groups {
-                do { done += try Sorter.transfer(group, to: folder, mode: mode) } catch { failure = (group[0], error); break }
+            var frameCount = 0
+            for photos in groups {
+                do {
+                    done += try Sorter.transfer(Self.withSidecars(photos), to: folder, mode: mode)
+                    frameCount += 1
+                } catch {
+                    failure = (photos[0], error)
+                    break
+                }
             }
             DispatchQueue.main.async {
                 guard let self else { return }
-                let frameCount = groups.prefix { group in done.contains { $0.original == group[0] } }.count
+                self.transferring.subtract(busy)
                 if mode == .move, !done.isEmpty {
                     self.undoStack.append(done.map { (original: $0.original, movedTo: $0.moved) })
                     self.removeFromList(Set(done.map { $0.original }))
@@ -1332,10 +1380,23 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Після переміщення: оновити в панелі папок кількість фото і нові підпапки.
+    /// Кілька M/C поспіль збираються в одне оновлення — кожна папка читається один раз.
     private func foldersChanged(_ folders: [URL]) {
-        for f in Set(folders.map(\.standardizedFileURL)) { folderPanel.refresh(f) }
-        for f in Set(folders.map { $0.deletingLastPathComponent().standardizedFileURL }) { folderPanel.refresh(f) }
+        let scheduled = !foldersToRefresh.isEmpty
+        for f in folders {
+            foldersToRefresh.insert(f.standardizedFileURL)
+            foldersToRefresh.insert(f.deletingLastPathComponent().standardizedFileURL)
+        }
+        guard !scheduled else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self else { return }
+            let all = self.foldersToRefresh
+            self.foldersToRefresh = []
+            self.folderPanel.refresh(all)
+        }
     }
+
+    private var foldersToRefresh = Set<URL>()
 
     /// Меню «Файл → Папка для відсортованих…».
     func chooseSortFolder() {

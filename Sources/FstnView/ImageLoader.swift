@@ -199,7 +199,8 @@ final class ImageLoader {
             options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
         )) ?? []
         return items
-            .filter { isSupported($0) }
+            // Папка з назвою на кшталт «x.jpg» — не фото
+            .filter { !$0.hasDirectoryPath && isSupported($0) }
             .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
     }
 
@@ -242,6 +243,8 @@ final class ImageLoader {
     private final class Pending {
         let op: Operation
         var callbacks: [(LoadedImage?) -> Void] = []
+        /// Файл видалили, поки він декодувався, — результат у кеш не кладемо.
+        var discard = false
         init(op: Operation) { self.op = op }
     }
 
@@ -265,8 +268,8 @@ final class ImageLoader {
         fullCache.removeObject(forKey: url as NSURL)
         rawCache.removeObject(forKey: url as NSURL)
         rawFullCache.removeObject(forKey: url as NSURL)
-        if let p = pending[url], !p.op.isExecuting {
-            p.op.cancel()
+        if let p = pending[url] {
+            if p.op.isExecuting { p.discard = true } else { p.op.cancel() }
             pending[url] = nil
         }
     }
@@ -308,7 +311,7 @@ final class ImageLoader {
             let result = ImageLoader.decodePreview(url: url, maxPixel: maxPixel, wholeFile: wholeFile)
             DispatchQueue.main.async {
                 guard let self else { return }
-                if let result { self.cache.setObject(result, forKey: url as NSURL, cost: result.cost) }
+                if let result, !entry.discard { self.cache.setObject(result, forKey: url as NSURL, cost: result.cost) }
                 if self.pending[url] === entry { self.pending[url] = nil }
                 entry.callbacks.forEach { $0(result) }
             }

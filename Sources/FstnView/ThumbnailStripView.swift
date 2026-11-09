@@ -336,7 +336,11 @@ private final class ThumbView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {}
-    override func mouseUp(with event: NSEvent) { onClick?(event.modifierFlags) }
+    override func mouseUp(with event: NSEvent) {
+        // Кнопку відпустили поза мініатюрою — це не клік по ній
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        onClick?(event.modifierFlags)
+    }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 

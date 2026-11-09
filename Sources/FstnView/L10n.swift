@@ -45,6 +45,8 @@ private let english: [String: String] = [
     "Сховати інші": "Hide Others",
     "Завершити %@": "Quit %@",
     "Перевірити оновлення…": "Check for Updates…",
+    "Завантаження оновлення…": "Downloading update…",
+    "Завантажений файл оновлення пошкоджено: контрольна сума не збігається. Спробуйте ще раз або встановіть DMG зі сторінки релізу.": "The downloaded update is damaged: the checksum doesn’t match. Try again or install the DMG from the release page.",
     "Файл": "File",
     "Відкрити…": "Open…",
     "Закрити вікно": "Close Window",

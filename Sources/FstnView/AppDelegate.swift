@@ -32,7 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        guard let url = urls.first else { return }
+        // Кілька файлів одразу: відкриваємо перше фото (а не, скажімо, .xmp, що потрапив у виділення)
+        guard let url = urls.first(where: { $0.hasDirectoryPath || ImageLoader.isSupported($0) }) ?? urls.first else { return }
         openedFromFinder = true
         let c = viewer()
         c.window?.makeKeyAndOrderFront(nil)
