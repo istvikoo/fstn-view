@@ -44,14 +44,39 @@ final class ThumbnailCache {
     }
 
     private static func decode(_ url: URL) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        var options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
             kCGImageSourceThumbnailMaxPixelSize: 256,
         ]
+        if isOnNetwork(url) {
+            // Мережевий диск: якщо фото вже прочитане — мініатюра з пам'яті; інакше лише вбудована
+            // (початок файлу). Без неї довелося б качати весь файл заради картинки 112×84.
+            if let data = ImageLoader.networkData(url) {
+                options[kCGImageSourceCreateThumbnailFromImageIfAbsent] = true
+                guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else { return nil }
+                return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+            }
+        } else {
+            options[kCGImageSourceCreateThumbnailFromImageIfAbsent] = true
+        }
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else { return nil }
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    /// Чи папка на мережевому диску — питаємо систему один раз на папку.
+    private static var networkFolders: [String: Bool] = [:]
+    private static let networkLock = NSLock()
+
+    private static func isOnNetwork(_ url: URL) -> Bool {
+        let folder = url.deletingLastPathComponent()
+        networkLock.lock()
+        defer { networkLock.unlock() }
+        if let known = networkFolders[folder.path] { return known }
+        let value = ImageLoader.isNetworkVolume(folder)
+        networkFolders[folder.path] = value
+        return value
     }
 }
 

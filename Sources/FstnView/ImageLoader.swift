@@ -139,6 +139,9 @@ final class ImageLoader {
 
     static func hasNetworkBytes(_ url: URL) -> Bool { networkBytes.object(forKey: url as NSURL) != nil }
 
+    /// Уже прочитаний вміст фото з мережевого диска (для мініатюри — без нового читання).
+    static func networkData(_ url: URL) -> Data? { networkBytes.object(forKey: url as NSURL) as Data? }
+
     /// Джерело для декодування: з уже прочитаних байтів, або (wholeFile) прочитати файл цілком
     /// одним шматком — через мережу це помітно швидше, ніж дрібні читання ImageIO.
     private static func source(for url: URL, wholeFile: Bool = false) -> CGImageSource? {

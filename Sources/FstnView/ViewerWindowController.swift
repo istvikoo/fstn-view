@@ -70,6 +70,14 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
     private var isNetworkFolder = false
     /// Фото, яке зараз завантажується з мережі (поки на екрані розмите прев'ю).
     private var networkLoading: URL?
+    /// Маленькі прев'ю з мережі: не більше двох читань одразу, непотрібні скасовуються.
+    private let quickQueue: OperationQueue = {
+        let q = OperationQueue()
+        q.name = "FstnView.networkQuick"
+        q.maxConcurrentOperationCount = 2
+        q.qualityOfService = .userInteractive
+        return q
+    }()
     /// Оцінки й мітки кадрів (прочитані з XMP), щоб не читати файл щоразу.
     private var marks: [URL: PhotoMark] = [:]
     private let markQueue = DispatchQueue(label: "fstn.marks", qos: .userInitiated)
@@ -549,7 +557,12 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                 state.fileName = url.lastPathComponent
                 showHint { L("Завантаження «%@» з мережі…", url.lastPathComponent) }
                 updateOverlay()
-                DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+                // Швидке гортання: прев'ю фото, яке вже проминули, не читаємо — інакше десятки
+                // мережевих читань змагаються з поточним фото
+                quickQueue.cancelAllOperations()
+                let quickOp = BlockOperation()
+                quickOp.addExecutionBlock { [weak self, weak quickOp] in
+                    guard quickOp?.isCancelled == false else { return }
                     let quick = ImageLoader.decodeEmbeddedQuick(url: url)
                     DispatchQueue.main.async {
                         guard let self, self.files.indices.contains(self.index), self.files[self.index] == url,
@@ -557,6 +570,7 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                         if let quick { self.showQuick(quick) }
                     }
                 }
+                quickQueue.addOperation(quickOp)
             }
             if fromCloud {
                 // Вміст ще в хмарі: замість «зависання» пояснюємо, що фото завантажується
@@ -578,6 +592,10 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
                     // і оцінку з самого файлу можна прочитати
                     if let i = self.files.firstIndex(of: url) { self.strip.refresh(i) }
                     for u in self.markTargets(url) { self.marks[u] = nil }
+                }
+                if overNetwork, ThumbnailCache.shared.cached(url) == nil, let i = self.files.firstIndex(of: url) {
+                    // У файлі не було вбудованої мініатюри — тепер, коли він прочитаний, робимо її з нього
+                    self.strip.refresh(i)
                 }
                 guard self.files.indices.contains(self.index), self.files[self.index] == url else { return }
                 if self.networkLoading == url { self.networkLoading = nil }
