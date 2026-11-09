@@ -1011,18 +1011,81 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     /// Переміщує кадр (фото, пару RAW+JPEG і .xmp) в Кошик і показує наступне.
     private func moveToTrash(_ url: URL) {
+        // Кадр уже видаляється або переноситься — друге натискання не має слати його в Кошик ще раз
+        guard !transferring.contains(url) else { return }
+        transferring.insert(url)
         let group = frameGroup(url)
         NSWorkspace.shared.recycle(group) { [weak self] trashed, error in
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.transferring.remove(url)
                 let moved = group.compactMap { original in trashed[original].map { (original: original, movedTo: $0) } }
                 if !moved.isEmpty { self.undoStack.append(moved) }
                 if let error {
+                    if moved.isEmpty {
+                        // Нічого не перемістилось — найчастіше на диску немає Кошика (мережева папка, флешка)
+                        self.offerPermanentDelete(url, group: group, error: error)
+                        return
+                    }
                     // Частину файлів кадру (напр. RAW з пари) не вдалося перемістити — теж повідомляємо
                     self.showError(L("Не вдалося перемістити «%@» у Кошик", url.lastPathComponent), error)
-                    if moved.isEmpty { return }
                 }
                 self.removeFromList(Set(moved.map { $0.original }))
+            }
+        }
+    }
+
+    /// Кошик недоступний: як і Finder, пропонуємо видалити одразу. Питаємо щоразу —
+    /// «Більше не показувати» сюди не стосується, бо повернути файл уже не можна.
+    private func offerPermanentDelete(_ url: URL, group: [URL], error: Error) {
+        guard !isShowingSheet else { return }
+        let names = group.map { $0.lastPathComponent }.joined(separator: ", ")
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = L("Не вдалося перемістити «%@» у Кошик", url.lastPathComponent)
+        alert.informativeText = error.localizedDescription + "\n\n"
+            + L("Видалити «%@» назавжди? Цю дію не можна скасувати.", names)
+        let delete = alert.addButton(withTitle: L("Видалити назавжди"))
+        delete.hasDestructiveAction = true
+        delete.keyEquivalent = ""                                             // Enter не видаляє випадково
+        alert.addButton(withTitle: L("Скасувати")).keyEquivalent = "\u{1b}"   // Esc — скасувати
+
+        let handle: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard let self else { return }
+            self.isShowingSheet = false
+            self.window?.makeFirstResponder(self.canvas)
+            if response == .alertFirstButtonReturn { self.deletePermanently(url, group: group) }
+        }
+        isShowingSheet = true
+        if let window {
+            alert.beginSheetModal(for: window, completionHandler: handle)
+        } else {
+            handle(alert.runModal())
+        }
+    }
+
+    private func deletePermanently(_ url: URL, group: [URL]) {
+        guard !transferring.contains(url) else { return }
+        transferring.insert(url)
+        transferQueue.async { [weak self] in
+            var removed = Set<URL>()
+            var failure: Error?
+            for file in group {
+                do {
+                    try FileManager.default.removeItem(at: file)
+                    removed.insert(file)
+                } catch {
+                    failure = error
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.transferring.remove(url)
+                if let failure { self.showError(L("Не вдалося видалити «%@»", url.lastPathComponent), failure) }
+                if !removed.isEmpty {
+                    self.removeFromList(removed)
+                    self.foldersChanged([url.deletingLastPathComponent()])
+                }
             }
         }
     }
@@ -1608,9 +1671,15 @@ final class ViewerWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Клавіатура (за кодами клавіш, тож працює і в українській розкладці)
 
+    /// Стрілки, PageUp/PageDown і +/− — їх можна тримати.
+    private static let repeatableKeys: Set<UInt16> = [123, 124, 125, 126, 116, 121, 24, 69, 27, 78]
+
     private func handleKey(_ event: NSEvent) -> Bool {
         let mods = event.modifierFlags.intersection([.command, .control, .option])
         guard mods.isEmpty else { return false }
+        // Утримання клавіші: повторюємо лише гортання і масштаб. Інакше Delete видаляв би фото
+        // одне за одним, цифри вмикали й вимикали б оцінку, а Esc закривав би і порівняння, і програму.
+        if event.isARepeat, !Self.repeatableKeys.contains(event.keyCode) { return true }
 
         switch event.keyCode {
         case 124, 125, 121: navigate(1)                 // → ↓ PageDown
